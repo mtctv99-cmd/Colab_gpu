@@ -1,5 +1,6 @@
 """WebSocket endpoint and ConnectionManager for Colab worker communication."""
 
+import time
 import asyncio
 import json
 import logging
@@ -26,7 +27,11 @@ _pending_direct_events: dict[str, asyncio.Event] = {}
 
 # Auto-scale settings: 1 worker handles up to 5 queued tasks before another worker is started.
 SCALE_UP_PENDING_PER_WORKER = 5
+SCALE_UP_DELAY_SECONDS = 6        # Queue must stay high for this long before firing scale-up
 MAX_CONCURRENT_WORKERS = 4
+SCALE_DOWN_IDLE_SECONDS = 120     # Stop a worker if idle ≥2 min with empty queue
+
+_scale_up_requested_at: float | None = None   # monotonic ts of first high-queue detection
 
 
 @router.websocket("/ws/dashboard")
@@ -319,7 +324,10 @@ async def _handle_status(email: str, status: str):
             
             # Auto dispatch next pending task if worker becomes IDLE
             if status == "IDLE":
+                manager.worker_info[email]["idle_since"] = datetime.now(timezone.utc)
                 asyncio.create_task(_try_dispatch_next_task(email))
+            elif status == "BUSY":
+                manager.worker_info[email].pop("idle_since", None)
 
     await manager.broadcast_status({"event": "worker_status", "email": email, "status": status})
 
@@ -414,12 +422,15 @@ async def _maybe_scale_up() -> None:
     Safe to call concurrently: uses _rotate_lock.locked() guard to avoid
     flooding Colab with simultaneous browser launches.
     """
-    # Skip if a worker is already being started (lock held)
+    global _scale_up_requested_at
+
     if _rotate_lock.locked():
+        _scale_up_requested_at = None
         return
 
     active_count = len(manager.active)
     if active_count >= MAX_CONCURRENT_WORKERS:
+        _scale_up_requested_at = None
         return
 
     try:
@@ -433,9 +444,90 @@ async def _maybe_scale_up() -> None:
         return
 
     threshold = SCALE_UP_PENDING_PER_WORKER * max(active_count, 1)
-    if pending > threshold:
+
+    if pending <= threshold:
+        # Queue is manageable — reset debounce timer
+        if _scale_up_requested_at is not None:
+            logger.debug("Scale-up watch reset: queue dropped to %d (threshold=%d)", pending, threshold)
+        _scale_up_requested_at = None
+        return
+
+    now = time.monotonic()
+    if _scale_up_requested_at is None:
+        _scale_up_requested_at = now
         logger.info(
-            "Auto scale-up: %d pending tasks / %d workers (threshold=%d). Starting 1 more worker.",
-            pending, active_count, threshold,
+            "Scale-up watch started: %d pending / %d workers. Will fire in %ss if still high.",
+            pending, active_count, SCALE_UP_DELAY_SECONDS,
         )
-        asyncio.create_task(_try_auto_rotate())
+        return
+
+    elapsed = now - _scale_up_requested_at
+    if elapsed < SCALE_UP_DELAY_SECONDS:
+        logger.debug("Scale-up waiting: %.1fs / %ss elapsed", elapsed, SCALE_UP_DELAY_SECONDS)
+        return
+
+    # Debounce passed — trigger scale-up
+    _scale_up_requested_at = None
+    logger.info(
+        "Scale-up FIRED after %.1fs: %d pending / %d workers. Starting 1 more worker.",
+        elapsed, pending, active_count,
+    )
+    asyncio.create_task(_try_auto_rotate())
+
+
+async def _maybe_scale_down() -> None:
+    """Stop one extra idle worker when the queue cools down.
+
+    Keep at least one warm worker alive. If there are no pending/processing tasks
+    and more than one worker is connected, stop the longest-idle worker after
+    SCALE_DOWN_IDLE_SECONDS.
+    """
+    active_count = len(manager.active)
+    if active_count <= 1:
+        return
+
+    try:
+        async with async_session() as db:
+            result = await db.execute(
+                select(func.count()).select_from(Task).where(Task.status.in_(["PENDING", "PROCESSING"]))
+            )
+            active_tasks = result.scalar() or 0
+    except Exception as exc:
+        logger.warning("_maybe_scale_down: failed to count tasks: %s", exc)
+        return
+
+    if active_tasks > 0:
+        return
+
+    now = datetime.now(timezone.utc)
+    idle_candidates: list[tuple[str, float]] = []
+    for email, info in manager.worker_info.items():
+        if info.get("status") != "IDLE":
+            continue
+        idle_since = info.get("idle_since") or info.get("connected_at") or now
+        idle_seconds = max(0, (now - idle_since).total_seconds())
+        idle_candidates.append((email, idle_seconds))
+
+    if not idle_candidates:
+        return
+
+    idle_candidates.sort(key=lambda x: x[1], reverse=True)
+    email, idle_seconds = idle_candidates[0]
+    if idle_seconds < SCALE_DOWN_IDLE_SECONDS:
+        return
+
+    logger.info(
+        "Scale-down: stopping idle worker %s after %.0fs idle (active workers=%d).",
+        email, idle_seconds, active_count,
+    )
+    asyncio.create_task(play_runner.stop_colab_worker(email))
+
+
+async def _scale_down_loop() -> None:
+    """Background loop to stop extra idle workers after queue cools down."""
+    while True:
+        await asyncio.sleep(30)
+        try:
+            await _maybe_scale_down()
+        except Exception as exc:
+            logger.warning("Scale-down loop error: %s", exc)

@@ -89,6 +89,11 @@ async def lifespan(app: FastAPI):
     if CLOUDFLARED_ENABLED:
         asyncio.create_task(_start_cloudflare_tunnel())
 
+    # Start background scale-down loop
+    from app.routes.ws import _scale_down_loop
+    asyncio.create_task(_scale_down_loop())
+    logger.info("Scale-down background loop started.")
+
     yield
 
     # Shutdown
