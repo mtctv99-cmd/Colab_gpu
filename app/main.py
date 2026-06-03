@@ -7,13 +7,15 @@ import logging
 import subprocess
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 
 
 from app.config import HOST, PORT, STATIC_DIR, CLOUDFLARED_ENABLED
 from app.database import init_db
-from app.routes import accounts, voices, tasks, ws
+from app.routes import accounts, voices, tasks, ws, tts
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -106,11 +108,34 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Colab Worker TTS", version="1.0.0", lifespan=lifespan)
 
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    detail = exc.detail
+    if isinstance(detail, dict):
+        error = detail.get("error", "http_error")
+        message = detail.get("message", str(detail))
+    else:
+        error = "http_error"
+        message = str(detail)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": error, "message": message},
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=422,
+        content={"error": "validation_error", "message": exc.errors()},
+    )
+
 # Register routers
 app.include_router(accounts.router)
 app.include_router(voices.router)
 app.include_router(tasks.router)
 app.include_router(ws.router)
+app.include_router(tts.router)
 
 
 # Serve static files (dashboard)
