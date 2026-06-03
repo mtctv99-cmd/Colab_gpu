@@ -44,6 +44,7 @@ class Task(Base):
     worker_id = Column(Integer, ForeignKey("google_accounts.id"), nullable=True)
     result_audio_path = Column(String, nullable=True)
     error_message = Column(Text, nullable=True)
+    language = Column(String, nullable=True, default=None)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     completed_at = Column(DateTime, nullable=True)
 

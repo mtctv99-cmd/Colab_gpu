@@ -26,10 +26,12 @@ router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 class CreateTaskRequest(BaseModel):
     text: str
     voice_id: int
+    language: str | None = None
 
 class CreateBatchTaskRequest(BaseModel):
     voice_id: int
     texts: list[str]
+    language: str | None = None
 
 
 
@@ -45,6 +47,7 @@ async def list_tasks(limit: int = 20, db: AsyncSession = Depends(get_db)):
             "id": t.id,
             "text": t.text,
             "voice_id": t.voice_id,
+            "language": t.language,
             "status": t.status,
             "worker_id": t.worker_id,
             "result_audio_path": t.result_audio_path,
@@ -68,6 +71,7 @@ async def create_task(req: CreateTaskRequest, db: AsyncSession = Depends(get_db)
         id=str(uuid.uuid4()),
         text=req.text,
         voice_id=req.voice_id,
+        language=req.language,
         status="PENDING",
     )
     db.add(task)
@@ -91,6 +95,7 @@ async def create_task(req: CreateTaskRequest, db: AsyncSession = Depends(get_db)
         "status": task.status,
         "text": task.text,
         "voice_id": task.voice_id,
+        "language": task.language,
     }
 
 
@@ -128,6 +133,7 @@ async def create_task_direct(req: CreateTaskRequest, db: AsyncSession = Depends(
         id=task_id,
         text=req.text,
         voice_id=req.voice_id,
+        language=req.language,
         status="PENDING",
     )
     db.add(task)
@@ -181,6 +187,7 @@ async def create_tasks_batch(req: CreateBatchTaskRequest, db: AsyncSession = Dep
             id=str(uuid.uuid4()),
             text=text,
             voice_id=req.voice_id,
+            language=req.language,
             status="PENDING",
         )
         db.add(task)
@@ -209,6 +216,7 @@ async def create_tasks_batch(req: CreateBatchTaskRequest, db: AsyncSession = Dep
             {
                 "id": t.id,
                 "text": t.text,
+                "language": t.language,
                 "status": t.status
             }
             for t in created_tasks
@@ -226,6 +234,7 @@ async def get_task(task_id: str, db: AsyncSession = Depends(get_db)):
         "id": task.id,
         "text": task.text,
         "voice_id": task.voice_id,
+        "language": task.language,
         "status": task.status,
         "worker_id": task.worker_id,
         "result_audio_path": task.result_audio_path,
@@ -307,7 +316,7 @@ async def _dispatch_task(task: Task, email: str, db: AsyncSession):
     base = config.SERVER_URL
     voice_url = f"{base}/api/voices/{task.voice_id}/audio"
 
-    dispatched = await manager.send_task(email, task.id, task.text, voice_url)
+    dispatched = await manager.send_task(email, task.id, task.text, voice_url, task.language)
     if dispatched:
         # Mark worker as BUSY in memory to prevent duplicate dispatches
         manager.worker_info[email]["status"] = "BUSY"

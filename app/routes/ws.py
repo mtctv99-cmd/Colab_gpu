@@ -74,7 +74,7 @@ class ConnectionManager:
         self.worker_info.pop(email, None)
         logger.info("Worker disconnected: %s", email)
 
-    async def send_task(self, email: str, task_id: str, text: str, voice_api_url: str):
+    async def send_task(self, email: str, task_id: str, text: str, voice_api_url: str, language: str | None = None):
         ws = self.active.get(email)
         if ws is None:
             return False
@@ -83,6 +83,7 @@ class ConnectionManager:
             "task_id": task_id,
             "text": text,
             "voice_api_url": voice_api_url,
+            "language": language,
         })
         return True
 
@@ -398,4 +399,3 @@ async def _try_auto_rotate():
                     await db.commit()
                 logger.error("Failed to start worker for %s, trying next available account: %s", email, exc)
                 # Tiếp tục vòng lặp để thử tài khoản OFFLINE tiếp theo
-

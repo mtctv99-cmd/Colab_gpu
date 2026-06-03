@@ -18,6 +18,17 @@ async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+    # Run manual migration for SQLite: Add language column to tasks if missing
+    try:
+        from sqlalchemy import text
+        async with async_session() as session:
+            # Check if language column exists in tasks
+            await session.execute(text("ALTER TABLE tasks ADD COLUMN language VARCHAR"))
+            await session.commit()
+    except Exception:
+        # Silently ignore if column already exists
+        pass
+
 
 async def get_db():
     """Dependency that yields a database session."""

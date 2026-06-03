@@ -336,12 +336,13 @@
     e.preventDefault();
     const text = $("#ttsText").value.trim();
     const voiceId = $("#ttsVoice").value;
+    const language = $("#ttsLanguage").value || null;
     if (!text || !voiceId) return;
 
     try {
       const result = await api("/api/tasks/", {
         method: "POST",
-        body: JSON.stringify({ text, voice_id: parseInt(voiceId) }),
+        body: JSON.stringify({ text, voice_id: parseInt(voiceId), language }),
       });
       addLog("info", `Task tạo thành công: ${result.id.slice(0, 8)}...`);
 
