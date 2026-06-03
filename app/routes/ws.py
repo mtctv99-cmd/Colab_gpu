@@ -29,7 +29,8 @@ _pending_direct_events: dict[str, asyncio.Event] = {}
 SCALE_UP_PENDING_PER_WORKER = 5
 SCALE_UP_DELAY_SECONDS = 6        # Queue must stay high for this long before firing scale-up
 MAX_CONCURRENT_WORKERS = 4
-SCALE_DOWN_IDLE_SECONDS = 120     # Stop a worker if idle ≥2 min with empty queue
+SCALE_DOWN_IDLE_SECONDS = 300     # Stop a worker if idle ≥5 min with empty queue
+KEEP_WARM_WORKERS = 0             # 0 = save quota aggressively; 1 = keep one warm worker alive
 
 _scale_up_requested_at: float | None = None   # monotonic ts of first high-queue detection
 
@@ -478,12 +479,13 @@ async def _maybe_scale_up() -> None:
 async def _maybe_scale_down() -> None:
     """Stop one extra idle worker when the queue cools down.
 
-    Keep at least one warm worker alive. If there are no pending/processing tasks
-    and more than one worker is connected, stop the longest-idle worker after
-    SCALE_DOWN_IDLE_SECONDS.
+    Respects KEEP_WARM_WORKERS: if 0, will shut down ALL idle workers (save quota).
+    If 1, keeps one warm worker alive.
+    Flow: send "shutdown" via WebSocket first (Colab worker exits loop cleanly),
+    then wait briefly, then close browser context.
     """
     active_count = len(manager.active)
-    if active_count <= 1:
+    if active_count <= KEEP_WARM_WORKERS:
         return
 
     try:
@@ -512,15 +514,34 @@ async def _maybe_scale_down() -> None:
         return
 
     idle_candidates.sort(key=lambda x: x[1], reverse=True)
-    email, idle_seconds = idle_candidates[0]
-    if idle_seconds < SCALE_DOWN_IDLE_SECONDS:
-        return
+    for email, idle_seconds in idle_candidates:
+        if idle_seconds < SCALE_DOWN_IDLE_SECONDS:
+            break
+        if active_count - 1 < KEEP_WARM_WORKERS:
+            break
 
-    logger.info(
-        "Scale-down: stopping idle worker %s after %.0fs idle (active workers=%d).",
-        email, idle_seconds, active_count,
-    )
-    asyncio.create_task(play_runner.stop_colab_worker(email))
+        logger.info(
+            "Scale-down: shutting down idle worker %s (idle=%.0fs, active=%d, keep_warm=%d).",
+            email, idle_seconds, active_count, KEEP_WARM_WORKERS,
+        )
+
+        # Step 1: Ask Colab worker to exit its loop cleanly via WebSocket
+        ws = manager.active.get(email)
+        if ws:
+            try:
+                await ws.send_json({"action": "shutdown"})
+                logger.info("Sent shutdown signal to worker %s", email)
+            except Exception as exc:
+                logger.debug("Could not send shutdown to %s: %s", email, exc)
+
+        # Step 2: Give the worker 3s to exit cleanly, then force-close browser
+        async def _delayed_stop(em: str):
+            await asyncio.sleep(3)
+            await play_runner.stop_colab_worker(em)
+            logger.info("Browser context closed for worker %s", em)
+
+        asyncio.create_task(_delayed_stop(email))
+        active_count -= 1
 
 
 async def _scale_down_loop() -> None:
