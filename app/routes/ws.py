@@ -33,6 +33,8 @@ SCALE_DOWN_IDLE_SECONDS = 300     # Stop a worker if idle ≥5 min with empty qu
 KEEP_WARM_WORKERS = 0             # 0 = save quota aggressively; 1 = keep one warm worker alive
 
 _scale_up_requested_at: float | None = None   # monotonic ts of first high-queue detection
+_batch_request_count: int = 0                 # incremented per /api/tts/batch call
+SCALE_UP_BATCH_THRESHOLD = 3                  # fire scale-up after this many batch requests
 
 
 @router.websocket("/ws/dashboard")
@@ -474,6 +476,34 @@ async def _maybe_scale_up() -> None:
         elapsed, pending, active_count,
     )
     asyncio.create_task(_try_auto_rotate())
+
+
+async def _on_batch_request() -> None:
+    """Trigger scale-up after a specific number of batch requests.
+    
+    Unlike single tasks which use a time-based debounce threshold,
+    batch requests count towards a separate threshold and fire immediately.
+    """
+    global _batch_request_count
+    
+    if _rotate_lock.locked():
+        return
+        
+    active_count = len(manager.active)
+    if active_count >= MAX_CONCURRENT_WORKERS:
+        _batch_request_count = 0
+        return
+        
+    _batch_request_count += 1
+    logger.debug("Batch request count: %d / %d", _batch_request_count, SCALE_UP_BATCH_THRESHOLD)
+    
+    if _batch_request_count >= SCALE_UP_BATCH_THRESHOLD:
+        _batch_request_count = 0
+        logger.info(
+            "Scale-up FIRED: %d batch requests accumulated. Starting 1 more worker.",
+            SCALE_UP_BATCH_THRESHOLD
+        )
+        asyncio.create_task(_try_auto_rotate())
 
 
 async def _maybe_scale_down() -> None:
