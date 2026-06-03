@@ -1,9 +1,7 @@
+"""API routes for managing Google accounts and Colab workers."""
+
 import asyncio
 import logging
-
-logger = logging.getLogger(__name__)
-
-"""API routes for managing Google accounts and Colab workers."""
 
 from datetime import datetime, timezone
 
@@ -17,6 +15,7 @@ from app.database import get_db
 from app.models import GoogleAccount
 from app.automation import play_runner
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
 

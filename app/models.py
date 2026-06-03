@@ -45,8 +45,11 @@ class Task(Base):
     result_audio_path = Column(String, nullable=True)
     error_message = Column(Text, nullable=True)
     language = Column(String, nullable=True, default=None)
+    batch_id = Column(String, nullable=True, default=None)
+    webhook_url = Column(String, nullable=True, default=None)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     completed_at = Column(DateTime, nullable=True)
 
     voice = relationship("Voice", back_populates="tasks")
     worker = relationship("GoogleAccount", back_populates="tasks")
+

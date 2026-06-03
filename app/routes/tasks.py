@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -291,7 +291,54 @@ async def complete_task(task_id: str, audio: UploadFile = File(...), db: AsyncSe
         event.set()
 
     await manager.broadcast_status({"event": "task_completed", "task_id": task_id})
+    if task.batch_id and task.webhook_url:
+        asyncio.create_task(_fire_webhook_if_batch_complete(task.batch_id, task.webhook_url))
+
     return {"status": "COMPLETED"}
+
+
+async def _fire_webhook_if_batch_complete(batch_id: str, webhook_url: str) -> None:
+    """POST batch completion payload when no task in the batch is still running."""
+    from app.database import async_session
+
+    async with async_session() as db:
+        result = await db.execute(
+            select(func.count(Task.id)).where(
+                Task.batch_id == batch_id,
+                Task.status.in_(["PENDING", "PROCESSING"]),
+            )
+        )
+        pending_count = result.scalar() or 0
+        if pending_count > 0:
+            return
+
+        result = await db.execute(select(Task).where(Task.batch_id == batch_id))
+        tasks = result.scalars().all()
+
+    payload = {
+        "batch_id": batch_id,
+        "status": "COMPLETED",
+        "tasks": [
+            {
+                "task_id": task.id,
+                "text": task.text,
+                "status": task.status,
+                "audio_url": f"/api/tasks/{task.id}/audio" if task.result_audio_path else None,
+                "error_message": task.error_message,
+            }
+            for task in tasks
+        ],
+    }
+
+    try:
+        import httpx
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(webhook_url, json=payload, timeout=10.0)
+            response.raise_for_status()
+        logger.info("Webhook fired for batch %s -> %s", batch_id, webhook_url)
+    except Exception as exc:
+        logger.warning("Webhook failed for batch %s -> %s: %s", batch_id, webhook_url, exc)
 
 
 # ── Debug endpoint to take screenshot of active Playwright pages ─────

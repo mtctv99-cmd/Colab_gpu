@@ -25,8 +25,8 @@ SERVER_URL = f"http://localhost:{PORT}"  # Will be dynamically updated if Cloudf
 DATABASE_URL = f"sqlite+aiosqlite:///{DATA_DIR / 'db.sqlite3'}"
 
 # Google Colab / GitHub settings
-GITHUB_USER = os.getenv("GITHUB_USER", "mtctv99-cmd")
-GITHUB_REPO = os.getenv("GITHUB_REPO", "Colab_tts")
+GITHUB_USER = os.getenv("GITHUB_USER", "")
+GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 COLAB_NOTEBOOK_PATH = "colab/worker.ipynb"
 
 # Cloudflare Tunnel
