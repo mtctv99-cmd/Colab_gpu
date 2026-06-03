@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Colab Worker TTS — Dashboard</title>
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <!-- ── Sidebar ─────────────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <span class="brand-icon">🎙️</span>
+      <span class="brand-text">Colab TTS</span>
+    </div>
+    <nav class="sidebar-nav">
+      <button class="nav-btn active" data-tab="dashboard">
+        <span class="nav-icon">📊</span> Dashboard
+      </button>
+      <button class="nav-btn" data-tab="accounts">
+        <span class="nav-icon">👤</span> Tài khoản
+      </button>
+      <button class="nav-btn" data-tab="voices">
+        <span class="nav-icon">🔊</span> Giọng nói
+      </button>
+      <button class="nav-btn" data-tab="tts">
+        <span class="nav-icon">✍️</span> Tạo TTS
+      </button>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="connection-status" id="wsStatus">
+        <span class="status-dot disconnected"></span>
+        <span>Disconnected</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── Main Content ────────────────────────────────── -->
+  <main class="main-content">
+
+    <!-- ===== TAB: Dashboard ===== -->
+    <section class="tab-content active" id="tab-dashboard">
+      <h1 class="page-title">Giám sát Tổng quan</h1>
+
+      <!-- Stats Cards -->
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">Worker hoạt động</div>
+          <div class="stat-value" id="statActiveWorkers">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Task hoàn thành</div>
+          <div class="stat-value" id="statCompleted">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Đang chờ xử lý</div>
+          <div class="stat-value" id="statPending">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Thất bại</div>
+          <div class="stat-value stat-error" id="statFailed">0</div>
+        </div>
+      </div>
+
+      <!-- Worker Table -->
+      <div class="card">
+        <h2 class="card-title">Worker đang hoạt động</h2>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Email</th>
+              <th>Trạng thái</th>
+              <th>GPU</th>
+              <th>Lần cuối</th>
+            </tr>
+          </thead>
+          <tbody id="workerTableBody">
+            <tr><td colspan="4" class="empty-row">Chưa có worker nào kết nối</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Recent Tasks -->
+      <div class="card">
+        <h2 class="card-title">Task gần đây</h2>
+        <div id="recentTasks" class="task-list">
+          <div class="empty-row">Chưa có task nào</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== TAB: Accounts ===== -->
+    <section class="tab-content" id="tab-accounts">
+      <h1 class="page-title">Quản lý Tài khoản Google</h1>
+
+      <div class="card">
+        <h2 class="card-title">Thêm tài khoản mới</h2>
+        <form id="addAccountForm" class="inline-form">
+          <input type="email" id="accountEmail" placeholder="email@gmail.com" required class="form-input" />
+          <button type="submit" class="btn btn-primary">➕ Thêm tài khoản</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Danh sách tài khoản</h2>
+        <div id="accountsList" class="accounts-grid">
+          <div class="empty-row">Chưa có tài khoản nào</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== TAB: Voices ===== -->
+    <section class="tab-content" id="tab-voices">
+      <h1 class="page-title">Thư viện Giọng nói</h1>
+
+      <div class="card">
+        <h2 class="card-title">Thêm giọng nói mới</h2>
+        <form id="addVoiceForm" class="voice-form">
+          <div class="form-row">
+            <input type="text" id="voiceName" placeholder="Tên giọng (VD: Giọng nam MB)" required class="form-input" />
+            <input type="file" id="voiceAudio" accept=".wav,.mp3" required class="form-input" />
+          </div>
+          <textarea id="voiceTranscript" placeholder="Nội dung văn bản của file âm thanh mẫu..." class="form-textarea"></textarea>
+          <button type="submit" class="btn btn-primary">➕ Thêm giọng nói</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Danh sách giọng nói</h2>
+        <div id="voicesList" class="voices-grid">
+          <div class="empty-row">Chưa có giọng nói nào</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== TAB: TTS ===== -->
+    <section class="tab-content" id="tab-tts">
+      <h1 class="page-title">Tạo TTS</h1>
+
+      <div class="card">
+        <h2 class="card-title">Chuyển văn bản thành giọng nói</h2>
+        <form id="ttsForm">
+          <textarea id="ttsText" placeholder="Nhập văn bản cần chuyển thành giọng nói..." class="form-textarea" rows="5" required></textarea>
+          <div class="form-row">
+            <select id="ttsVoice" class="form-input" required>
+              <option value="">-- Chọn giọng nói --</option>
+            </select>
+            <button type="submit" class="btn btn-primary">🚀 Bắt đầu chuyển đổi</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Task Result Area -->
+      <div class="card" id="ttsResultArea" style="display: none;">
+        <h2 class="card-title">Kết quả</h2>
+        <div id="ttsResultContent">
+          <div class="task-status-line">
+            <span class="status-badge pending">Đang xử lý...</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- TTS Log -->
+      <div class="card">
+        <h2 class="card-title">Log tác vụ</h2>
+        <div id="ttsLog" class="log-area">
+          <div class="log-empty">Chưa có task nào được tạo.</div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
