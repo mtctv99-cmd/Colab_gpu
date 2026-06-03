@@ -11,6 +11,8 @@
   let ws = null;
   let reconnectTimer = null;
   let activePlayback = null;
+  let refreshTimeout = null;
+  let lastCreatedTaskId = null;
 
   // ── DOM refs ───────────────────────────────────────
   const $ = (sel) => document.querySelector(sel);
@@ -69,13 +71,43 @@
     }, 3000);
   }
 
+  function debounceRefresh() {
+    if (refreshTimeout) return;
+    refreshTimeout = setTimeout(() => {
+      refreshDashboard();
+      refreshRecentTasks();
+      refreshTimeout = null;
+    }, 500);
+  }
+
   function handleWsMessage(msg) {
     const ev = msg.event;
     if (ev === "worker_connected" || ev === "worker_disconnected" || ev === "worker_status") {
-      refreshDashboard();
+      debounceRefresh();
     } else if (ev === "task_created" || ev === "task_completed" || ev === "task_failed") {
-      refreshDashboard();
-      refreshRecentTasks();
+      debounceRefresh();
+
+      if (msg.task_id === lastCreatedTaskId) {
+        if (ev === "task_completed") {
+          addLog("success", `Task hoàn thành: ${msg.task_id.slice(0, 8)}...`);
+          $("#ttsResultContent").innerHTML = `
+            <div class="task-status-line">
+              <span class="status-badge completed">Hoàn thành</span>
+            </div>
+            <div class="audio-player-container">
+              <audio class="audio-player" controls autoplay src="${API}/api/tasks/${msg.task_id}/audio"></audio>
+            </div>
+          `;
+        } else if (ev === "task_failed") {
+          addLog("error", `Task thất bại: ${msg.error || "Unknown error"}`);
+          $("#ttsResultContent").innerHTML = `
+            <div class="task-status-line">
+              <span class="status-badge failed">Thất bại</span>
+              <span style="color: var(--red); font-size: 0.85rem;">${esc(msg.error || "Unknown error")}</span>
+            </div>
+          `;
+        }
+      }
     }
   }
 
@@ -323,42 +355,9 @@
         </div>
       `;
 
-      // Poll for completion
-      pollTaskResult(result.id);
+      lastCreatedTaskId = result.id;
     } catch (_) {}
   });
-
-  function pollTaskResult(taskId) {
-    const interval = setInterval(async () => {
-      try {
-        const task = await api(`/api/tasks/${taskId}`);
-        if (task.status === "COMPLETED") {
-          clearInterval(interval);
-          addLog("success", `Task hoàn thành: ${taskId.slice(0, 8)}...`);
-          $("#ttsResultContent").innerHTML = `
-            <div class="task-status-line">
-              <span class="status-badge completed">Hoàn thành</span>
-            </div>
-            <div class="audio-player-container">
-              <audio class="audio-player" controls src="${API}/api/tasks/${taskId}/audio"></audio>
-            </div>
-          `;
-        } else if (task.status === "FAILED") {
-          clearInterval(interval);
-          addLog("error", `Task thất bại: ${task.error_message || "Unknown error"}`);
-          $("#ttsResultContent").innerHTML = `
-            <div class="task-status-line">
-              <span class="status-badge failed">Thất bại</span>
-              <span style="color: var(--red); font-size: 0.85rem;">${esc(task.error_message || "Unknown error")}</span>
-            </div>
-          `;
-        }
-      } catch (_) {}
-    }, 2000);
-
-    // Stop polling after 5 minutes
-    setTimeout(() => clearInterval(interval), 300000);
-  }
 
   // ── Global actions ─────────────────────────────────
   window.startWorker = async function (id) {

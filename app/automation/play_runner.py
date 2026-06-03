@@ -2,12 +2,14 @@
 
 import asyncio
 import logging
+import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 
-from app.config import PROFILES_DIR, GITHUB_USER, GITHUB_REPO, COLAB_NOTEBOOK_PATH, WORKER_KEEPALIVE_INTERVAL
+from app.config import DATA_DIR, PROFILES_DIR, GITHUB_USER, GITHUB_REPO, COLAB_NOTEBOOK_PATH, WORKER_KEEPALIVE_INTERVAL
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +17,66 @@ logger = logging.getLogger(__name__)
 _active_contexts: dict[str, tuple] = {}  # email -> (playwright, context)
 _active_pages: dict[str, Page] = {}
 _keepalive_tasks: dict[str, asyncio.Task] = {}
+
+
+async def cleanup_zombie_browsers(kill_active: bool = False) -> int:
+    """Kill Chromium/Chrome processes launched with this app's profile directory.
+
+    If kill_active is False, keep currently tracked worker profile processes alive.
+    """
+    profiles_base = str(PROFILES_DIR).lower()
+    active_profiles = {
+        str(PROFILES_DIR / email).lower()
+        for email in _active_contexts.keys()
+    }
+    killed = 0
+
+    if not sys.platform.startswith("win"):
+        return killed
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            "Get-CimInstance Win32_Process | "
+            "Where-Object { $_.Name -match 'chrome|chromium|msedge' } | "
+            "Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            logger.warning("Browser cleanup process listing failed: %s", stderr.decode(errors="ignore")[:300])
+            return killed
+
+        import json
+        raw = stdout.decode(errors="ignore").strip()
+        if not raw:
+            return killed
+        entries = json.loads(raw)
+        if isinstance(entries, dict):
+            entries = [entries]
+
+        for entry in entries:
+            cmd = (entry.get("CommandLine") or "").lower()
+            pid = entry.get("ProcessId")
+            if not pid or profiles_base not in cmd:
+                continue
+            if not kill_active and any(profile in cmd for profile in active_profiles):
+                continue
+            result = await asyncio.create_subprocess_exec(
+                "taskkill", "/PID", str(pid), "/F", "/T",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await result.wait()
+            killed += 1
+            logger.info("Killed zombie browser process PID=%s", pid)
+    except Exception as exc:
+        logger.warning("cleanup_zombie_browsers failed: %s", exc)
+
+    return killed
 
 
 def _colab_url() -> str:
@@ -49,6 +111,7 @@ async def add_google_account_session(email: str) -> None:
         )
         page = await context.new_page()
         await page.add_init_script("delete navigator.__proto__.webdriver;")
+        await _dismiss_chrome_restore_pages(page)
         await page.goto("https://accounts.google.com/")
 
         # Store references so we can close later
@@ -67,8 +130,14 @@ async def finish_google_account_session(email: str) -> None:
     _active_pages.pop(email, None)
     if entry is not None:
         pw, ctx = entry
-        await ctx.close()
-        await pw.stop()
+        try:
+            await ctx.close()
+        except Exception as exc:
+            logger.debug("Failed to close context (possibly already closed): %s", exc)
+        try:
+            await pw.stop()
+        except Exception as exc:
+            logger.debug("Failed to stop playwright: %s", exc)
         logger.info("Closed login window for %s", email)
 
 
@@ -85,10 +154,93 @@ async def _fill_colab_param(page: Page, param_name: str, value: str) -> bool:
             loc = page.locator(sel).first
             if await loc.count() > 0:
                 await loc.fill(value)
+                await loc.dispatch_event("change")
+                await loc.dispatch_event("input")
                 logger.info("Filled parameter %s using selector: %s", param_name, sel)
                 return True
         except Exception:
             pass
+    # Deep DOM fallback for Colab generated form inputs.
+    try:
+        res = await page.evaluate(
+            """({ paramName, value }) => {
+                const seen = new Set();
+                function walk(root, out = []) {
+                    if (!root || seen.has(root)) return out;
+                    seen.add(root);
+                    if (root.nodeType === Node.ELEMENT_NODE) out.push(root);
+                    if (root.shadowRoot) walk(root.shadowRoot, out);
+                    for (const child of (root.children || [])) walk(child, out);
+                    return out;
+                }
+                function textAround(el) {
+                    let cur = el;
+                    let text = '';
+                    for (let i = 0; i < 5 && cur; i++) {
+                        text += ' ' + ((cur.innerText || cur.textContent || '').trim());
+                        cur = cur.parentNode || cur.host;
+                    }
+                    return text.toLowerCase();
+                }
+                function setNativeValue(el, val) {
+                    const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+                    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+                    if (setter) setter.call(el, val);
+                    else el.value = val;
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    el.blur?.();
+                }
+                const all = walk(document.body);
+                const param = paramName.toLowerCase();
+                const inputs = all.filter(el => ['INPUT', 'TEXTAREA'].includes(el.tagName));
+                for (const input of inputs) {
+                    const attrs = [input.name, input.id, input.placeholder, input.getAttribute('aria-label')]
+                        .filter(Boolean).join(' ').toLowerCase();
+                    if (attrs.includes(param) || textAround(input).includes(param)) {
+                        setNativeValue(input, value);
+                        return 'input-set:' + (input.name || input.id || input.placeholder || input.tagName);
+                    }
+                }
+                return 'not-found';
+            }""",
+            {"paramName": param_name, "value": value},
+        )
+        if str(res).startswith("input-set"):
+            logger.info("Filled parameter %s via deep input fallback: %s", param_name, res)
+            return True
+    except Exception as exc:
+        logger.debug("Failed deep input fallback for %s: %s", param_name, exc)
+    # Fallback: Colab forms often keep the value in the code cell itself.
+    # Update the literal assignment in visible CodeMirror/editor text and trigger input events.
+    try:
+        escaped = value.replace("\\", "\\\\").replace("'", "\\'")
+        res = await page.evaluate(f"""() => {{
+            const paramName = {param_name!r};
+            const value = {value!r};
+            const candidates = Array.from(document.querySelectorAll('.view-line, .cm-line, pre, code, textarea'));
+            let changed = 0;
+            for (const el of candidates) {{
+                const txt = el.innerText || el.textContent || el.value || '';
+                if (!txt.includes(paramName) || !txt.includes('#@param')) continue;
+                const re = new RegExp(paramName + "\\\\s*=\\\\s*(['\\\"])(.*?)\\\\1");
+                const next = txt.replace(re, paramName + " = '" + value + "'");
+                if (next !== txt) {{
+                    if ('value' in el) el.value = next;
+                    else el.textContent = next;
+                    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    changed++;
+                }}
+            }}
+            return changed;
+        }}""")
+        if res:
+            logger.info("Filled parameter %s via editor fallback (%s replacements)", param_name, res)
+            return True
+    except Exception as exc:
+        logger.debug("Failed editor fallback for %s: %s", param_name, exc)
+    logger.warning("Could not fill Colab parameter %s", param_name)
     return False
 
 
@@ -98,6 +250,151 @@ async def _shadow_click(page: Page, js_expr: str) -> str:
         return res or "no-result"
     except Exception as e:
         return f"err:{type(e).__name__}"
+
+
+async def _dismiss_chrome_restore_pages(page: Page) -> None:
+    """Close Chromium's 'Restore pages?' bubble if it appears after a profile crash."""
+    try:
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(200)
+    except Exception:
+        pass
+
+
+async def _dismiss_colab_security_warning(page: Page, email: str) -> bool:
+    """Click Colab's GitHub security warning: 'Run anyway'."""
+    logger.info("Waiting for Colab 'Run anyway' warning for %s", email)
+
+    try:
+        screenshot_path = DATA_DIR / "colab_run_anyway_before.png"
+        await page.screenshot(path=str(screenshot_path))
+        logger.info("Saved pre-dismiss screenshot to %s", screenshot_path)
+    except Exception as exc:
+        logger.debug("Could not save pre-dismiss screenshot: %s", exc)
+
+    for attempt in range(60):
+        try:
+            ok_locator = page.locator(
+                '[dialogAction="ok"], [dialogaction="ok"], #ok, '
+                'md-filled-button:has-text("Run anyway"), '
+                'md-text-button:has-text("Run anyway"), '
+                'mwc-button:has-text("Run anyway"), '
+                'paper-button:has-text("Run anyway")'
+            ).last
+            if await ok_locator.count() > 0 and await ok_locator.is_visible():
+                await ok_locator.click(force=True, timeout=1000)
+                logger.info("Dismissed Run anyway via dialogAction locator for %s", email)
+                return True
+        except Exception as exc:
+            logger.debug("dialogAction locator attempt %d failed: %s", attempt + 1, exc)
+
+        try:
+            for label in ["Run anyway", "Vẫn chạy", "van chay"]:
+                role_locator = page.get_by_role("button", name=label).last
+                if await role_locator.count() > 0 and await role_locator.is_visible():
+                    await role_locator.click(force=True, timeout=1000)
+                    logger.info("Dismissed Run anyway via role locator for %s: %s", email, label)
+                    return True
+        except Exception as exc:
+            logger.debug("role locator attempt %d failed: %s", attempt + 1, exc)
+
+        try:
+            warning_res = await page.evaluate("""() => {
+                const labels = ['run anyway', 'vẫn chạy', 'van chay'];
+                const seen = new Set();
+                const textOf = (node) => ((node && (node.innerText || node.textContent)) || '').trim().toLowerCase();
+                const visible = (node) => {
+                    if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+                    const style = window.getComputedStyle(node);
+                    const rect = node.getBoundingClientRect();
+                    return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+                };
+                const disabled = (node) => node?.disabled || node?.hasAttribute?.('disabled') || node?.getAttribute?.('aria-disabled') === 'true';
+
+                function walk(root, visitor) {
+                    if (!root || seen.has(root)) return null;
+                    seen.add(root);
+                    const hit = visitor(root);
+                    if (hit) return hit;
+                    if (root.shadowRoot) {
+                        const shadowHit = walk(root.shadowRoot, visitor);
+                        if (shadowHit) return shadowHit;
+                    }
+                    for (const child of (root.children || [])) {
+                        const childHit = walk(child, visitor);
+                        if (childHit) return childHit;
+                    }
+                    return null;
+                }
+
+                function matchesRunAnyway(node) {
+                    const tag = node.tagName || '';
+                    const role = node.getAttribute?.('role');
+                    const action = (node.getAttribute?.('dialogAction') || node.getAttribute?.('dialogaction') || '').toLowerCase();
+                    const id = (node.id || '').toLowerCase();
+                    const buttonLike = tag === 'BUTTON' || tag.includes('BUTTON') || tag === 'PAPER-BUTTON' || role === 'button';
+                    if (action === 'ok' || id === 'ok') return true;
+                    if (!buttonLike) return false;
+                    let cur = node;
+                    for (let depth = 0; depth < 8 && cur; depth++) {
+                        const txt = textOf(cur);
+                        if (labels.some(label => txt.includes(label))) return true;
+                        cur = cur.parentNode || cur.host;
+                    }
+                    return false;
+                }
+
+                function clickable(node) {
+                    let cur = node;
+                    for (let depth = 0; depth < 8 && cur; depth++) {
+                        const tag = cur.tagName || '';
+                        const role = cur.getAttribute?.('role');
+                        if (tag === 'BUTTON' || tag.includes('BUTTON') || tag === 'PAPER-BUTTON' || role === 'button') return cur;
+                        cur = cur.parentNode || cur.host;
+                    }
+                    return node;
+                }
+
+                const target = walk(document.body, node => {
+                    if (node.nodeType !== Node.ELEMENT_NODE) return null;
+                    if (!matchesRunAnyway(node)) return null;
+                    const clickTarget = clickable(node);
+                    if (!visible(clickTarget) || disabled(clickTarget)) return null;
+                    return clickTarget;
+                });
+
+                if (!target) return 'not-found';
+                target.scrollIntoView({ block: 'center', inline: 'center' });
+                target.focus?.();
+                for (const type of ['pointerdown', 'mousedown', 'mouseup', 'pointerup', 'click']) {
+                    target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+                }
+                target.click?.();
+                return 'dismissed:' + (target.tagName || target.nodeName) + ':' + textOf(target).slice(0, 80);
+            }""")
+            if warning_res and "dismissed" in warning_res:
+                logger.info("Dismissed Run anyway via deep JS for %s (attempt %d): %s", email, attempt + 1, warning_res)
+                return True
+        except Exception as exc:
+            logger.debug("deep JS attempt %d failed: %s", attempt + 1, exc)
+
+        if attempt in (20, 35, 50):
+            try:
+                await page.keyboard.press("Tab")
+                await page.keyboard.press("Enter")
+                logger.info("Tried keyboard Tab+Enter fallback for Run anyway (%s, attempt %d)", email, attempt + 1)
+            except Exception as exc:
+                logger.debug("keyboard fallback failed: %s", exc)
+
+        await page.wait_for_timeout(250)
+
+    try:
+        fail_path = DATA_DIR / "colab_run_anyway_failed.png"
+        await page.screenshot(path=str(fail_path))
+        logger.warning("Run anyway was not dismissed for %s. Saved debug screenshot: %s", email, fail_path)
+    except Exception:
+        logger.warning("Run anyway was not dismissed for %s and screenshot failed.", email)
+    return False
 
 
 async def _check_quota_or_errors(page: Page) -> str | None:
@@ -191,7 +488,7 @@ async def _select_gpu_and_connect(page: Page, email: str) -> None:
             return 'runtime-menu-not-found';
         }}""")
     logger.info("Runtime menu action for %s: %s", email, runtime_menu)
-    await page.wait_for_timeout(1000)
+    await page.wait_for_timeout(300)
     
     # Bước 2: Click "Change runtime type"
     try:
@@ -205,32 +502,69 @@ async def _select_gpu_and_connect(page: Page, email: str) -> None:
             return 'change-rt-not-found';
         }}""")
     logger.info("Change runtime type action for %s: %s", email, change_rt)
-    await page.wait_for_timeout(2000)
+    await page.wait_for_timeout(500)
     
-    # Bước 3: Chọn T4 GPU trong dialog
-    try:
-        await page.get_by_text("T4", exact=True).first.click(timeout=5000, force=True)
-        gpu_result = "T4-clicked:playwright-force"
-    except Exception as exc:
-        gpu_result = f"t4-click-fail:{type(exc).__name__}: {exc}"
+    # Bước 3: Chọn T4 GPU trong dialog bằng DOM selector chính xác
+    gpu_result = await _shadow_click(page, """() => {
+        try {
+            const mwcDialog = document.querySelector('mwc-dialog, colab-dialog, paper-dialog, [role="dialog"]');
+            if (!mwcDialog) return 'no-dialog-found';
+            
+            // Đi vào colab-runtime-attributes-selector
+            const selector = mwcDialog.querySelector('colab-runtime-attributes-selector');
+            if (!selector || !selector.shadowRoot) return 'no-attributes-selector';
+            
+            // Tìm mwc-formfield thứ 2 (cho T4 GPU)
+            const formfields = selector.shadowRoot.querySelectorAll('mwc-formfield');
+            if (formfields.length < 2) return 'insufficient-formfields:' + formfields.length;
+            
+            const t4FormField = formfields[1]; // index 1 là T4 GPU
+            const mwcRadio = t4FormField.querySelector('mwc-radio');
+            if (!mwcRadio || !mwcRadio.shadowRoot) return 'no-mwc-radio';
+            
+            const input = mwcRadio.shadowRoot.querySelector('input');
+            if (!input) return 'no-input-found';
+            
+            input.click();
+            input.checked = true;
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            return 't4-radio-clicked-successfully';
+        } catch (e) {
+            return 'error-selecting-t4:' + e.message;
+        }
+    }""")
     logger.info("GPU select result for %s: %s", email, gpu_result)
-    await page.wait_for_timeout(1000)
+    await page.wait_for_timeout(300)
     
-    # Bước 4: Click Save
-    save_result = "no-save-btn"
-    for save_text in ["Save", "Lưu", "Lưu lại"]:
-        try:
-            loc = page.get_by_role("button", name=save_text, exact=False)
-            if await loc.count() == 0:
-                loc = page.get_by_text(save_text, exact=True)
-            if await loc.count() > 0:
-                await loc.first.click(timeout=5000, force=True)
-                save_result = f"save-clicked:{save_text}"
-                break
-        except Exception as exc:
-            save_result = f"save-click-fail:{save_text}:{type(exc).__name__}: {exc}"
+    # Bước 4: Click Save trong mwc-dialog
+    save_result = await _shadow_click(page, """() => {
+        try {
+            const mwcDialog = document.querySelector('mwc-dialog, colab-dialog, paper-dialog, [role="dialog"]');
+            if (!mwcDialog) return 'no-dialog-found';
+            
+            // Nút Save trong mwc-dialog thường nằm ở phần slot="primaryAction" hoặc có dialogAction="ok"
+            const saveBtn = mwcDialog.querySelector('[dialogAction="ok"], [dialogaction="ok"], button#ok, md-filled-button, paper-button');
+            if (saveBtn) {
+                saveBtn.click();
+                return 'save-clicked-successfully:' + saveBtn.tagName;
+            }
+            
+            // Fallback tìm tất cả các nút trong dialog chứa chữ Save hoặc Lưu
+            const buttons = mwcDialog.querySelectorAll('button, paper-button, md-filled-button, [role="button"]');
+            for (const btn of buttons) {
+                const txt = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+                if (txt === 'save' || txt === 'lưu' || txt === 'lưu lại' || txt === 'ok') {
+                    btn.click();
+                    return 'save-clicked-via-text-fallback:' + btn.tagName;
+                }
+            }
+            return 'save-button-not-found';
+        } catch (e) {
+            return 'error-clicking-save:' + e.message;
+        }
+    }""")
     logger.info("Save runtime result for %s: %s", email, save_result)
-    await page.wait_for_timeout(3000)
+    await page.wait_for_timeout(500)
     
     # Kiểm tra quota trước khi kết nối
     quota_err = await _check_quota_or_errors(page)
@@ -257,10 +591,11 @@ async def _select_gpu_and_connect(page: Page, email: str) -> None:
     }""")
     logger.info("Connect action result for %s: %s", email, connect_result)
     
-    # Chờ runtime connected (RAM/Disk indicator xuất hiện)
+    # Chờ runtime connected ngắn. Colab có thể queue Run All trong lúc runtime đang connect,
+    # nên không cần block 30s ở đây.
     connected = False
-    for i in range(20):
-        await page.wait_for_timeout(3000)
+    for i in range(12):
+        await page.wait_for_timeout(500)
         quota_err = await _check_quota_or_errors(page)
         if quota_err:
             logger.error("Quota error while waiting connect for %s: %s", email, quota_err)
@@ -268,26 +603,52 @@ async def _select_gpu_and_connect(page: Page, email: str) -> None:
             
         try:
             ram_visible = await page.evaluate("""() => {
-                const indicators = document.querySelectorAll('colab-usage-meter, .memory-display, [title*="RAM"], [title*="Disk"]');
-                if (indicators.length > 0) return 'connected';
-                const host = document.querySelector('colab-connect-button');
-                if (!host) return 'no-host';
-                const shadow = host.shadowRoot;
-                if (!shadow) return 'no-shadow';
-                const txt = shadow.innerText || '';
-                if (txt.includes('Connected') || txt.includes('RAM') || txt.includes('RAM/Disk')) return 'connected';
-                if (shadow.querySelector('colab-usage-meter')) return 'connected';
+                function findElement(root, selectors) {
+                    if (!root) return null;
+                    for (const sel of selectors) {
+                        try {
+                            const el = root.querySelector(sel);
+                            if (el) return el;
+                        } catch(e){}
+                    }
+                    if (root.shadowRoot) {
+                        const el = findElement(root.shadowRoot, selectors);
+                        if (el) return el;
+                    }
+                    if (root.children) {
+                        for (let i = 0; i < root.children.length; i++) {
+                            const el = findElement(root.children[i], selectors);
+                            if (el) return el;
+                        }
+                    }
+                    return null;
+                }
+                
+                const el = findElement(document.body, ['colab-usage-meter', '.memory-display', '[title*="RAM"]', '[title*="Disk"]', 'colab-connect-button']);
+                if (el) {
+                    if (el.tagName === 'COLAB-CONNECT-BUTTON') {
+                        const shadow = el.shadowRoot;
+                        if (shadow) {
+                            const txt = shadow.innerText || '';
+                            if (txt.includes('Connected') || txt.includes('RAM') || txt.includes('RAM/Disk') || shadow.querySelector('colab-usage-meter')) {
+                                return 'connected';
+                            }
+                        }
+                    } else {
+                        return 'connected';
+                    }
+                }
                 return 'waiting';
             }""")
             if ram_visible == "connected":
                 connected = True
-                logger.info("Runtime connected after %ds for %s", (i+1)*3, email)
+                logger.info("Runtime connected after %.1fs for %s", (i + 1) * 0.5, email)
                 break
         except Exception:
             pass
             
     if not connected:
-        logger.warning("Runtime connection timed out for %s, will try to Run All anyway", email)
+        logger.warning("Runtime not connected after 6s for %s, running all anyway", email)
 
 
 async def start_colab_worker(email: str, server_url: str) -> None:
@@ -307,7 +668,10 @@ async def start_colab_worker(email: str, server_url: str) -> None:
             args=[
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
-                "--disable-blink-features=AutomationControlled"
+                "--disable-blink-features=AutomationControlled",
+                "--disable-session-crashed-bubble",
+                "--disable-infobars",
+                "--no-first-run"
             ],
             ignore_default_args=["--enable-automation"],
             viewport={"width": 1280, "height": 800},
@@ -370,7 +734,7 @@ async def start_colab_worker(email: str, server_url: str) -> None:
             await page.goto(url, wait_until="domcontentloaded", timeout=60000)
 
         # Wait a moment for Colab UI to fully render
-        await page.wait_for_timeout(5000)
+        await page.wait_for_timeout(2000)
 
         # 1. Chọn GPU T4 & Connect trước khi điền tham số
         await _select_gpu_and_connect(page, email)
@@ -383,14 +747,15 @@ async def start_colab_worker(email: str, server_url: str) -> None:
         logger.info("Sending Run All (Ctrl+F9) for %s", email)
         await page.keyboard.press("Control+F9")
 
-        # Google Colab shows the security dialog *after* you trigger execution.
-        try:
-            await page.wait_for_selector("#ok", timeout=5000)
-            run_anyway_btn = page.locator("#ok")
-            await run_anyway_btn.click()
-            logger.info("Dismissed Colab security warning dialog for %s", email)
-        except Exception:
-            pass
+        dismissed = await _dismiss_colab_security_warning(page, email)
+
+        if dismissed:
+            try:
+                path = DATA_DIR / "colab_after_dismiss.png"
+                await page.screenshot(path=str(path))
+                logger.info("Saved debug screenshot to %s", path)
+            except Exception as e:
+                logger.warning("Failed to save debug screenshot: %s", e)
 
         # 4. Tiêm JavaScript Keep-Alive để click Connect / Dialog định kỳ
         try:
@@ -403,6 +768,12 @@ async def start_colab_worker(email: str, server_url: str) -> None:
                             btn.click();
                             console.log('[Antigravity-KeepAlive] Clicked Connect button');
                         }
+                    }
+                    const runAnyway = Array.from(document.querySelectorAll('button, paper-button, md-text-button, md-filled-button, [role="button"]'))
+                        .find(el => ((el.innerText || el.textContent || '').toLowerCase()).includes('run anyway'));
+                    if (runAnyway) {
+                        runAnyway.click();
+                        console.log('[Antigravity-KeepAlive] Dismissed Run anyway dialog');
                     }
                     const okBtn = document.querySelector('paper-button#ok, colab-dialog paper-button, md-filled-button[id*="ok"]');
                     if (okBtn) {
@@ -429,10 +800,9 @@ async def start_colab_worker(email: str, server_url: str) -> None:
         # Capture error screenshot before closing context for debugging
         try:
             if 'page' in locals() and page:
-                import os
-                os.makedirs(r"d:\Colab\data", exist_ok=True)
-                await page.screenshot(path=r"d:\Colab\data\colab_debug_error.png")
-                logger.info("Saved error screenshot to d:\\Colab\\data\\colab_debug_error.png")
+                path = DATA_DIR / "colab_debug_error.png"
+                await page.screenshot(path=str(path))
+                logger.info("Saved error screenshot to %s", path)
         except Exception as e:
             logger.error("Failed to capture error screenshot: %s", e)
             

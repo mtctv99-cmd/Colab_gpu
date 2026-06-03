@@ -99,14 +99,21 @@ async def start_worker(account_id: int, request: Request, db: AsyncSession = Dep
     if "localhost" in server_url or "127.0.0.1" in server_url:
         server_url = str(request.base_url).rstrip("/")
 
-    try:
-        await play_runner.start_colab_worker(account.email, server_url)
-    except Exception as exc:
-        account.status = "OFFLINE"
-        await db.commit()
-        raise HTTPException(status_code=500, detail=str(exc))
+    async def _bg_start():
+        try:
+            await play_runner.start_colab_worker(account.email, server_url)
+        except Exception as exc:
+            logger.error("Background start failed for %s: %s", account.email, exc)
+            # Re-fetch database session to update status
+            from app.database import async_session
+            async with async_session() as bdb:
+                acc = await bdb.get(GoogleAccount, account_id)
+                if acc:
+                    acc.status = "OFFLINE"
+                    await bdb.commit()
 
-    return {"id": account.id, "status": account.status}
+    asyncio.create_task(_bg_start())
+    return {"id": account.id, "status": "STARTING_BACKGROUND"}
 
 
 
@@ -134,3 +141,24 @@ async def delete_account(account_id: int, db: AsyncSession = Depends(get_db)):
     await db.delete(account)
     await db.commit()
     return {"detail": "Deleted"}
+
+
+# ── Debug screenshot ──────────────────────────────────────────
+@router.get("/{account_id}/screenshot")
+async def get_worker_screenshot(account_id: int, db: AsyncSession = Depends(get_db)):
+    from fastapi.responses import FileResponse
+    account = await db.get(GoogleAccount, account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found.")
+    
+    page = play_runner._active_pages.get(account.email)
+    if not page:
+        raise HTTPException(status_code=400, detail=f"No active browser session for {account.email}")
+    
+    safe_email = account.email.replace("@", "_").replace(".", "_")
+    path = config.DATA_DIR / f"colab_current_{safe_email}.png"
+    try:
+        await page.screenshot(path=str(path))
+        return FileResponse(str(path))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to capture screenshot: {exc}")

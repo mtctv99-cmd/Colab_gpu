@@ -1,6 +1,7 @@
 """API routes for TTS task management."""
 
 import asyncio
+import aiofiles
 import logging
 import os
 import uuid
@@ -17,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models import Task, Voice
-from app.config import RESULTS_DIR
+from app.config import DATA_DIR, RESULTS_DIR
 from app.routes.ws import manager, _pending_direct_events
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -254,11 +255,10 @@ async def complete_task(task_id: str, audio: UploadFile = File(...), db: AsyncSe
     if task.status not in ("PROCESSING", "PENDING"):
         raise HTTPException(status_code=400, detail="Task is not in a processable state.")
 
-    # Save audio file
-    filename = f"{task_id}.wav"
-    dest = RESULTS_DIR / filename
-    content = await audio.read()
-    dest.write_bytes(content)
+    # Save audio file asynchronously to avoid blocking FastAPI's event loop.
+    dest = RESULTS_DIR / f"{task_id}.wav"
+    async with aiofiles.open(dest, mode="wb") as f:
+        await f.write(await audio.read())
 
     task.status = "COMPLETED"
     task.result_audio_path = str(dest)
@@ -278,17 +278,15 @@ async def complete_task(task_id: str, audio: UploadFile = File(...), db: AsyncSe
 @router.get("/debug/screenshot")
 async def debug_screenshot():
     from app.automation.play_runner import _active_pages
-    import os
-    
-    os.makedirs(r"d:\Colab\data", exist_ok=True)
+
     results = {}
     for email, page in _active_pages.items():
         try:
             clean_email = email.replace("@", "_").replace(".", "_")
-            path = f"d:\\Colab\\data\\colab_debug_{clean_email}.png"
-            await page.screenshot(path=path)
+            path = DATA_DIR / f"colab_debug_{clean_email}.png"
+            await page.screenshot(path=str(path))
             results[email] = {
-                "screenshot_path": path,
+                "screenshot_path": str(path),
                 "url": page.url,
                 "title": await page.title()
             }
@@ -324,4 +322,3 @@ async def _dispatch_task(task: Task, email: str, db: AsyncSession):
     else:
         task.status = "PENDING"
         await db.commit()
-

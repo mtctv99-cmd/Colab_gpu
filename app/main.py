@@ -56,6 +56,15 @@ async def _start_cloudflare_tunnel():
 async def lifespan(app: FastAPI):
     """Startup / shutdown lifecycle."""
     # Startup
+    logger.info("Cleaning up zombie browser processes...")
+    try:
+        from app.automation.play_runner import cleanup_zombie_browsers
+        killed = await cleanup_zombie_browsers(kill_active=True)
+        if killed > 0:
+            logger.info("Cleaned up %d leftover browser processes.", killed)
+    except Exception as exc:
+        logger.warning("Failed to run startup browser cleanup: %s", exc)
+
     logger.info("Initializing database...")
     await init_db()
     logger.info("Database ready.")

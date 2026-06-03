@@ -1,6 +1,7 @@
 """API routes for managing voice samples."""
 
-import os
+import aiofiles
+import anyio
 import uuid
 from pathlib import Path
 
@@ -70,8 +71,9 @@ async def add_voice(
     filename = f"{uuid.uuid4().hex}{ext}"
     dest = VOICES_DIR / filename
 
-    content = await audio.read()
-    dest.write_bytes(content)
+    # Save voice audio file asynchronously.
+    async with aiofiles.open(dest, mode="wb") as f:
+        await f.write(await audio.read())
 
     voice = Voice(name=name, audio_path=str(dest), transcript=transcript)
     db.add(voice)
@@ -89,7 +91,7 @@ async def delete_voice(voice_id: int, db: AsyncSession = Depends(get_db)):
     # Remove audio file
     audio_file = Path(voice.audio_path)
     if audio_file.exists():
-        os.remove(audio_file)
+        await anyio.to_thread.run_sync(lambda: audio_file.unlink(missing_ok=True))
     await db.delete(voice)
     await db.commit()
     return {"detail": "Deleted"}
