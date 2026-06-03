@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from sqlalchemy import select, update
+from sqlalchemy import select, update, func
 
 from app.database import async_session
 from app.models import GoogleAccount, Task
@@ -23,6 +23,10 @@ _dashboard_clients: list[WebSocket] = []
 
 # global registry for synchronous task events to bypass circular import
 _pending_direct_events: dict[str, asyncio.Event] = {}
+
+# Auto-scale settings: 1 worker handles up to 5 queued tasks before another worker is started.
+SCALE_UP_PENDING_PER_WORKER = 5
+MAX_CONCURRENT_WORKERS = 4
 
 
 @router.websocket("/ws/dashboard")
@@ -399,3 +403,39 @@ async def _try_auto_rotate():
                     await db.commit()
                 logger.error("Failed to start worker for %s, trying next available account: %s", email, exc)
                 # Tiếp tục vòng lặp để thử tài khoản OFFLINE tiếp theo
+
+
+async def _maybe_scale_up() -> None:
+    """Start an additional Colab worker if the pending queue exceeds threshold.
+
+    Rule: if pending_tasks > SCALE_UP_PENDING_PER_WORKER * current_active_workers
+    AND total active workers < MAX_CONCURRENT_WORKERS → trigger _try_auto_rotate.
+
+    Safe to call concurrently: uses _rotate_lock.locked() guard to avoid
+    flooding Colab with simultaneous browser launches.
+    """
+    # Skip if a worker is already being started (lock held)
+    if _rotate_lock.locked():
+        return
+
+    active_count = len(manager.active)
+    if active_count >= MAX_CONCURRENT_WORKERS:
+        return
+
+    try:
+        async with async_session() as db:
+            result = await db.execute(
+                select(func.count()).select_from(Task).where(Task.status == "PENDING")
+            )
+            pending = result.scalar() or 0
+    except Exception as exc:
+        logger.warning("_maybe_scale_up: failed to count pending tasks: %s", exc)
+        return
+
+    threshold = SCALE_UP_PENDING_PER_WORKER * max(active_count, 1)
+    if pending > threshold:
+        logger.info(
+            "Auto scale-up: %d pending tasks / %d workers (threshold=%d). Starting 1 more worker.",
+            pending, active_count, threshold,
+        )
+        asyncio.create_task(_try_auto_rotate())

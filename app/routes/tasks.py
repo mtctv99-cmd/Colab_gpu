@@ -88,8 +88,13 @@ async def create_task(req: CreateTaskRequest, db: AsyncSession = Depends(get_db)
             from app.routes.ws import _try_auto_rotate
             logger.info("No active workers online. Automatically starting an offline worker...")
             asyncio.create_task(_try_auto_rotate())
+        else:
+            from app.routes.ws import _maybe_scale_up
+            asyncio.create_task(_maybe_scale_up())
 
     await manager.broadcast_status({"event": "task_created", "task_id": task.id})
+    from app.routes.ws import _maybe_scale_up
+    asyncio.create_task(_maybe_scale_up())
     return {
         "id": task.id,
         "status": task.status,
@@ -200,6 +205,9 @@ async def create_tasks_batch(req: CreateBatchTaskRequest, db: AsyncSession = Dep
         from app.routes.ws import _try_auto_rotate
         logger.info("No active workers online for batch request. Starting one...")
         asyncio.create_task(_try_auto_rotate())
+    else:
+        from app.routes.ws import _maybe_scale_up
+        asyncio.create_task(_maybe_scale_up())
         
     # Refresh all tasks and attempt dispatch
     for task in created_tasks:
@@ -209,6 +217,9 @@ async def create_tasks_batch(req: CreateBatchTaskRequest, db: AsyncSession = Dep
         if idle_email:
             await _dispatch_task(task, idle_email, db)
         await manager.broadcast_status({"event": "task_created", "task_id": task.id})
+
+    from app.routes.ws import _maybe_scale_up
+    asyncio.create_task(_maybe_scale_up())
 
     return {
         "voice_id": req.voice_id,
