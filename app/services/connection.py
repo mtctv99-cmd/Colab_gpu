@@ -36,8 +36,8 @@ class ConnectionManager:
         ws = self.active_connections.get(email)
         if ws:
             try:
-                await ws.send_json(task_data)
                 self.worker_status[email] = "BUSY"
+                await ws.send_json(task_data)
                 return True
             except Exception as e:
                 logger.error(f"Error sending task to {email}: {e}")

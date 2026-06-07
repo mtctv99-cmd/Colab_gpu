@@ -1,0 +1,14 @@
+.git
+__pycache__/
+*.pyc
+*.pyo
+data/
+.env
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+docs/
+tests/
+test_e2e*.py

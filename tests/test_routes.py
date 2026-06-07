@@ -9,7 +9,7 @@ client = TestClient(app)
 def test_read_main():
     response = client.get("/")
     assert response.status_code == 200
-    assert response.json() == {"message": "TTS Server is running"}
+    assert response.json() == {"message": "TTS Server is running", "status": "ok"}
 
 def test_tts_no_workers():
     # Clear active workers
