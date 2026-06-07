@@ -7,14 +7,14 @@ from app.services.connection import manager
 import uuid
 import asyncio
 
-router = APIRouter()
+router = APIRouter(prefix="/api/tts", tags=["TTS"])
 
 class TTSRequest(BaseModel):
     text: str
     voice_id: int
     language: str = "vi"
 
-@router.post("/tts")
+@router.post("/text")
 async def create_tts_task(request: TTSRequest, db: AsyncSession = Depends(get_db)):
     # 1. Check voice
     voice = await db.get(Voice, request.voice_id)
