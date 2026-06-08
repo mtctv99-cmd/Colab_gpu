@@ -18,15 +18,17 @@ from datetime import timedelta
 logger = logging.getLogger(__name__)
 
 
-# JS utilities for Playwright automation
+# JS utilities for Playwright automation - injected via add_init_script
 _JS_UTILS = """
-    window._colabUtils = {
-        findByText: (root, texts, tags) => {
+(function() {
+    console.log('Injecting __colabUtils...');
+    window.__colabUtils = {
+        findByText: function(root, texts, tags) {
             const tagSet = tags ? new Set(tags.map(t => t.toUpperCase())) : null;
             for (const el of root.querySelectorAll('*')) {
                 if (tagSet && !tagSet.has(el.tagName)) {
                     if (el.shadowRoot) {
-                        const r = window._colabUtils.findByText(el.shadowRoot, texts, tags);
+                        const r = this.findByText(el.shadowRoot, texts, tags);
                         if (r) return r;
                     }
                     continue;
@@ -34,25 +36,49 @@ _JS_UTILS = """
                 const txt = (el.innerText || el.textContent || el.getAttribute('aria-label') || '').trim();
                 if (texts.some(t => txt === t || txt.startsWith(t))) return el;
                 if (el.shadowRoot) {
-                    const r = window._colabUtils.findByText(el.shadowRoot, texts, tags);
+                    const r = this.findByText(el.shadowRoot, texts, tags);
                     if (r) return r;
                 }
             }
             return null;
         },
-        shadowClick: (selector_func) => {
-            try { return selector_func(); } catch (e) { return 'err:' + e.message; }
-        },
-        checkGpuStatus: () => {
+        checkGpuStatus: function() {
             const host = document.querySelector('colab-connect-button');
             if (!host || !host.shadowRoot) return 'unknown';
             const txt = host.shadowRoot.innerText || '';
-            if (txt.includes('T4') || (txt.includes('Connected') && (txt.includes('RAM') || host.shadowRoot.querySelector('colab-usage-meter')))) {
-                return 't4_active';
+            if (txt.includes('Connected') && (txt.includes('RAM') || host.shadowRoot.querySelector('colab-usage-meter'))) {
+                if (txt.includes('T4') || txt.includes('GPU')) return 't4_connected';
+                return 'connected';
             }
-            return 'not_t4';
+            return 'disconnected';
+        },
+        checkRamConnected: function() {
+            if (document.querySelector('colab-usage-meter')) return true;
+            const host = document.querySelector('colab-connect-button');
+            if (host && host.shadowRoot) {
+                const txt = host.shadowRoot.innerText || '';
+                if (txt.includes('Connected') || txt.includes('RAM')) return true;
+            }
+            return false;
+        },
+        findElementByPatterns: function(patterns) {
+            patterns = patterns || ["usage limit", "quota", "gpu limit", "cannot connect", "too many sessions"];
+            const dialogs = document.querySelectorAll('colab-dialog, paper-dialog, mwc-dialog, dialog, [role="dialog"]');
+            for (const dlg of dialogs) {
+                if (dlg.offsetParent !== null) {
+                    const t = (dlg.innerText || "").toLowerCase();
+                    for (const p of patterns) { if (t.includes(p)) return "dialog:" + p; }
+                }
+            }
+            const bodyText = (document.body && document.body.innerText || "").toLowerCase();
+            for (const cp of ["usage limit", "cannot connect", "too many active sessions"]) {
+                if (bodyText.includes(cp)) return "body:" + cp;
+            }
+            return null;
         }
     };
+    console.log('__colabUtils injected successfully.');
+})();
 """
 
 
@@ -643,6 +669,7 @@ async def start_colab_worker(email: str, server_url: str) -> None:
 
         # Wait a moment for Colab UI to fully render
         await page.wait_for_timeout(2000)
+        await page.evaluate(_JS_UTILS)
 
         # 1. Chọn GPU T4 & Connect trước khi điền tham số
         await _select_gpu_and_connect(page, email)

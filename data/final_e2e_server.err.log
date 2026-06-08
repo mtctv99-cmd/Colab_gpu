@@ -1,63 +1,13 @@
-INFO:     Started server process [33708]
+INFO:     Started server process [32544]
 INFO:     Waiting for application startup.
-2026-06-08 23:57:49,612 [INFO] app.main: Cleaning up zombie browser processes...
-2026-06-08 23:57:50,361 [INFO] app.main: Initializing database...
-2026-06-08 23:57:50,373 [INFO] app.main: Database ready.
-2026-06-08 23:57:50,373 [INFO] app.main: Cleaning up orphan tasks...
-2026-06-08 23:57:50,383 [INFO] app.main: Orphan tasks cleaned up successfully.
-2026-06-08 23:57:50,383 [INFO] app.main: Scale-down background loop started.
+2026-06-09 00:14:00,803 [INFO] app.main: Cleaning up zombie browser processes...
+2026-06-09 00:14:01,534 [INFO] app.main: Initializing database...
+2026-06-09 00:14:01,545 [INFO] app.main: Database ready.
+2026-06-09 00:14:01,546 [INFO] app.main: Cleaning up orphan tasks...
+2026-06-09 00:14:01,556 [INFO] app.main: Orphan tasks cleaned up successfully.
+2026-06-09 00:14:01,557 [INFO] app.main: Scale-down background loop started.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
-DEBUG:    = connection is CONNECTING
-DEBUG:    < GET /ws/dashboard HTTP/1.1
-DEBUG:    < host: 127.0.0.1:8001
-DEBUG:    < connection: Upgrade
-DEBUG:    < pragma: no-cache
-DEBUG:    < cache-control: no-cache
-DEBUG:    < authorization: Basic YWRtaW46dHRzODg4
-DEBUG:    < user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0
-DEBUG:    < upgrade: websocket
-DEBUG:    < origin: http://127.0.0.1:8001
-DEBUG:    < sec-websocket-version: 13
-DEBUG:    < accept-encoding: gzip, deflate, br, zstd
-DEBUG:    < accept-language: vi,en-US;q=0.9,en;q=0.8
-DEBUG:    < cookie: ph_phc_yGiSfCTcBFiBv5ahdw8iYNL5j97iAcwZZV1q1sr3Iwd_posthog=%7B%22%24device_id%22%3A%22019e71e8-8f7f-7de9-ba04-4c1197132a4d%22%2C%22distinct_id%22%3A%22019e71e8-8f7f-7de9-ba04-4c1197132a4d%22%2C%22%24sesid%22%3A%5B1780028266857%2C%22019e71e8-8f86-7df3-923c-e00dbce77c9e%22%2C1780027527042%5D%2C%22%24epp%22%3Atrue%2C%22%24initial_person_info%22%3A%7B%22r%22%3A%22%24direct%22%2C%22u%22%3A%22http%3A%2F%2F127.0.0.1%3A3484%2Fmk-studio%22%7D%2C%22%24user_state%22%3A%22anonymous%22%7D
-DEBUG:    < sec-websocket-key: tRhhZ6FSla2L6ddQpaM9DQ==
-DEBUG:    < sec-websocket-extensions: permessage-deflate; client_max_window_bits
-INFO:     ('127.0.0.1', 64401) - "WebSocket /ws/dashboard" [accepted]
-DEBUG:    > HTTP/1.1 101 Switching Protocols
-DEBUG:    > Upgrade: websocket
-DEBUG:    > Connection: Upgrade
-DEBUG:    > Sec-WebSocket-Accept: r45WGvKMf1rNhrsoNNYZoaHbB5s=
-DEBUG:    > Sec-WebSocket-Extensions: permessage-deflate
-DEBUG:    > date: Mon, 08 Jun 2026 16:57:51 GMT
-DEBUG:    > server: uvicorn
-INFO:     connection open
-DEBUG:    = connection is OPEN
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 5d ae 03 3a [binary, 4 bytes]
-DEBUG:    < PONG 5d ae 03 3a [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING a0 41 3a e5 [binary, 4 bytes]
-DEBUG:    < PONG a0 41 3a e5 [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-2026-06-08 23:58:51,316 [INFO] app.routes.tasks: No active workers online for batch request. Starting one...
-2026-06-08 23:58:51,329 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi1@gmail.com...
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 59 86 54 ae [binary, 4 bytes]
-DEBUG:    < PONG 59 86 54 ae [binary, 4 bytes]
-DEBUG:    > TEXT '{"event":"task_created","task_id":"ccfdc6d6-1d6a-40c2-9694-c24d8bc7d485"}' [73 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    > TEXT '{"event":"task_created","task_id":"8d163d96-0a40-4b3d-ab80-3e7576572f1a"}' [73 bytes]
-DEBUG:    > TEXT '{"event":"task_created","task_id":"62e587c8-9866-423d-b572-3e3db92962ba"}' [73 bytes]
-DEBUG:    > TEXT '{"event":"task_created","task_id":"5568804a-4c33-42ac-aedd-cbf4fe5a405c"}' [73 bytes]
-DEBUG:    > TEXT '{"event":"task_created","task_id":"aaca30ee-0382-407c-88e2-765dbd1af277"}' [73 bytes]
-DEBUG:    > TEXT '{"event":"task_created","task_id":"4cc17fd3-1026-4fd5-8705-1bafa306f884"}' [73 bytes]
-DEBUG:    > TEXT '{"event":"task_created","task_id":"15219c71-be7e-4aca-b5d3-639a1d8afad6"}' [73 bytes]
-DEBUG:    > TEXT '{"event":"task_created","task_id":"2eda3ec9-459d-4322-893c-fbb0bdac24fd"}' [73 bytes]
-DEBUG:    > TEXT '{"event":"task_created","task_id":"ea356ab8-af2e-486d-95a6-321931165179"}' [73 bytes]
-DEBUG:    > TEXT '{"event":"task_created","task_id":"7482344b-54d2-49dd-ab81-455e5bf4d986"}' [73 bytes]
 DEBUG:    = connection is CONNECTING
 DEBUG:    < GET /ws/dashboard HTTP/1.1
 DEBUG:    < host: localhost:8001
@@ -70,149 +20,18 @@ DEBUG:    < origin: http://localhost:8001
 DEBUG:    < sec-websocket-version: 13
 DEBUG:    < accept-encoding: gzip, deflate, br, zstd
 DEBUG:    < accept-language: en-US,en;q=0.9
-DEBUG:    < sec-websocket-key: MPLPR6HqdsbQW2nETfHBEw==
+DEBUG:    < sec-websocket-key: d/K9V/pUeiUeuNgrg4DdAA==
 DEBUG:    < sec-websocket-extensions: permessage-deflate; client_max_window_bits
-INFO:     ('127.0.0.1', 60809) - "WebSocket /ws/dashboard" [accepted]
+INFO:     ('127.0.0.1', 52767) - "WebSocket /ws/dashboard" [accepted]
 DEBUG:    > HTTP/1.1 101 Switching Protocols
 DEBUG:    > Upgrade: websocket
 DEBUG:    > Connection: Upgrade
-DEBUG:    > Sec-WebSocket-Accept: z6O/c9CMsS0EhVYFvzi9u9lrenA=
+DEBUG:    > Sec-WebSocket-Accept: UmZNHp/IXKu3H4nYnW36dO9wRT8=
 DEBUG:    > Sec-WebSocket-Extensions: permessage-deflate
-DEBUG:    > date: Mon, 08 Jun 2026 16:58:57 GMT
+DEBUG:    > date: Mon, 08 Jun 2026 17:14:01 GMT
 DEBUG:    > server: uvicorn
 INFO:     connection open
 DEBUG:    = connection is OPEN
-2026-06-08 23:58:59,967 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi1@gmail.com from GitHub: https://colab.research.google.com/github///blob/main/colab/worker.ipynb
-2026-06-08 23:59:04,777 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi1@gmail.com
-2026-06-08 23:59:09,807 [INFO] app.automation.play_runner: Runtime menu action for thanhchuapi1@gmail.com: runtime-menu-not-found
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 7b 33 4a 94 [binary, 4 bytes]
-DEBUG:    < PONG 7b 33 4a 94 [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-2026-06-08 23:59:15,160 [INFO] app.automation.play_runner: Change runtime type action for thanhchuapi1@gmail.com: change-rt-not-found
-2026-06-08 23:59:15,683 [INFO] app.automation.play_runner: GPU select result for thanhchuapi1@gmail.com: no-attributes-selector
-2026-06-08 23:59:16,075 [INFO] app.automation.play_runner: Save runtime result for thanhchuapi1@gmail.com: save-clicked-successfully:MD-TEXT-BUTTON
-2026-06-08 23:59:16,600 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi1@gmail.com...
-2026-06-08 23:59:16,611 [INFO] app.automation.play_runner: Connect action result for thanhchuapi1@gmail.com: no-connect-button
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING ec fd a6 60 [binary, 4 bytes]
-DEBUG:    < PONG ec fd a6 60 [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-2026-06-08 23:59:23,085 [WARNING] app.automation.play_runner: Runtime not connected after 6s for thanhchuapi1@gmail.com, running all anyway
-2026-06-08 23:59:23,143 [WARNING] app.automation.play_runner: Could not fill Colab parameter SERVER_URL
-2026-06-08 23:59:23,198 [WARNING] app.automation.play_runner: Could not fill Colab parameter EMAIL
-2026-06-08 23:59:23,198 [INFO] app.automation.play_runner: Sending Run All (Ctrl+F9) for thanhchuapi1@gmail.com
-2026-06-08 23:59:23,211 [INFO] app.automation.play_runner: Waiting for Colab 'Run anyway' warning for thanhchuapi1@gmail.com
-2026-06-08 23:59:23,541 [INFO] app.automation.play_runner: Saved pre-dismiss screenshot to D:\Colab\data\colab_run_anyway_before.png
-2026-06-08 23:59:30,400 [INFO] app.automation.play_runner: Tried keyboard Tab+Enter fallback for Run anyway (thanhchuapi1@gmail.com, attempt 21)
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING ab 21 53 1b [binary, 4 bytes]
-DEBUG:    < PONG ab 21 53 1b [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-2026-06-08 23:59:35,497 [INFO] app.automation.play_runner: Tried keyboard Tab+Enter fallback for Run anyway (thanhchuapi1@gmail.com, attempt 36)
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 8f 80 7e 49 [binary, 4 bytes]
-DEBUG:    < PONG 8f 80 7e 49 [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-2026-06-08 23:59:40,581 [INFO] app.automation.play_runner: Tried keyboard Tab+Enter fallback for Run anyway (thanhchuapi1@gmail.com, attempt 51)
-2026-06-08 23:59:50,072 [WARNING] app.automation.play_runner: Run anyway was not dismissed for thanhchuapi1@gmail.com. Saved debug screenshot: D:\Colab\data\colab_run_anyway_failed.png
-2026-06-08 23:59:50,088 [INFO] app.automation.play_runner: Keep-Alive JS injected successfully for thanhchuapi1@gmail.com
-2026-06-08 23:59:50,088 [INFO] app.automation.play_runner: Colab worker process started and keep-alive active for thanhchuapi1@gmail.com
-2026-06-08 23:59:50,089 [INFO] app.routes.ws: Successfully auto-rotated to thanhchuapi1@gmail.com
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING ae 92 fe 7d [binary, 4 bytes]
-DEBUG:    < PONG ae 92 fe 7d [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 68 31 b1 27 [binary, 4 bytes]
-DEBUG:    < PONG 68 31 b1 27 [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 'Y\x0e\nl' [text, 4 bytes]
-DEBUG:    < PONG 'Y\x0e\nl' [text, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 04 76 2e 9d [binary, 4 bytes]
-DEBUG:    < PONG 04 76 2e 9d [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 81 34 7c 20 [binary, 4 bytes]
-DEBUG:    < PONG 81 34 7c 20 [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING b4 32 1e 26 [binary, 4 bytes]
-DEBUG:    < PONG b4 32 1e 26 [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 80 85 af 4f [binary, 4 bytes]
-DEBUG:    < PONG 80 85 af 4f [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 10 a5 9c d7 [binary, 4 bytes]
-DEBUG:    < PONG 10 a5 9c d7 [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 22 e4 fd 8d [binary, 4 bytes]
-DEBUG:    < PONG 22 e4 fd 8d [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING b4 93 30 59 [binary, 4 bytes]
-DEBUG:    < PONG b4 93 30 59 [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 62 91 d9 4a [binary, 4 bytes]
-DEBUG:    < PONG 62 91 d9 4a [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING d0 a9 d7 28 [binary, 4 bytes]
-DEBUG:    < PONG d0 a9 d7 28 [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING bb 0d 8c 7d [binary, 4 bytes]
-DEBUG:    < PONG bb 0d 8c 7d [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 5a 44 80 3e [binary, 4 bytes]
-DEBUG:    < PONG 5a 44 80 3e [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 3d a9 ea ce [binary, 4 bytes]
-DEBUG:    < PONG 3d a9 ea ce [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 39 85 ea 6b [binary, 4 bytes]
-DEBUG:    < PONG 39 85 ea 6b [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING '%\x13u\x1c' [text, 4 bytes]
-DEBUG:    < PONG '%\x13u\x1c' [text, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 6e f1 31 03 [binary, 4 bytes]
-DEBUG:    < PONG 6e f1 31 03 [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 8e b4 fc 77 [binary, 4 bytes]
-DEBUG:    < PONG 8e b4 fc 77 [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 28 e7 2f 0b [binary, 4 bytes]
-DEBUG:    < PONG 28 e7 2f 0b [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING b5 ba 3a f0 [binary, 4 bytes]
-DEBUG:    < PONG b5 ba 3a f0 [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 18 dd 2f 9b [binary, 4 bytes]
-DEBUG:    < PONG 18 dd 2f 9b [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    < CLOSE 1001 (going away) [2 bytes]
-DEBUG:    = connection is CLOSING
-DEBUG:    > CLOSE 1001 (going away) [2 bytes]
-DEBUG:    x half-closing TCP connection
-DEBUG:    = connection is CLOSED
-INFO:     connection closed
 DEBUG:    = connection is CONNECTING
 DEBUG:    < GET /ws/dashboard HTTP/1.1
 DEBUG:    < host: 127.0.0.1:8001
@@ -227,136 +46,24 @@ DEBUG:    < sec-websocket-version: 13
 DEBUG:    < accept-encoding: gzip, deflate, br, zstd
 DEBUG:    < accept-language: vi,en-US;q=0.9,en;q=0.8
 DEBUG:    < cookie: ph_phc_yGiSfCTcBFiBv5ahdw8iYNL5j97iAcwZZV1q1sr3Iwd_posthog=%7B%22%24device_id%22%3A%22019e71e8-8f7f-7de9-ba04-4c1197132a4d%22%2C%22distinct_id%22%3A%22019e71e8-8f7f-7de9-ba04-4c1197132a4d%22%2C%22%24sesid%22%3A%5B1780028266857%2C%22019e71e8-8f86-7df3-923c-e00dbce77c9e%22%2C1780027527042%5D%2C%22%24epp%22%3Atrue%2C%22%24initial_person_info%22%3A%7B%22r%22%3A%22%24direct%22%2C%22u%22%3A%22http%3A%2F%2F127.0.0.1%3A3484%2Fmk-studio%22%7D%2C%22%24user_state%22%3A%22anonymous%22%7D
-DEBUG:    < sec-websocket-key: 7dwAbZOTQpDzgE5Z05+r2Q==
+DEBUG:    < sec-websocket-key: 0CQmygYLf4HKQbbkEWtJGQ==
 DEBUG:    < sec-websocket-extensions: permessage-deflate; client_max_window_bits
-INFO:     ('127.0.0.1', 56487) - "WebSocket /ws/dashboard" [accepted]
+INFO:     ('127.0.0.1', 49672) - "WebSocket /ws/dashboard" [accepted]
 DEBUG:    > HTTP/1.1 101 Switching Protocols
 DEBUG:    > Upgrade: websocket
 DEBUG:    > Connection: Upgrade
-DEBUG:    > Sec-WebSocket-Accept: hQNy7wiI9/k6EGMlEy9QyoepG3w=
+DEBUG:    > Sec-WebSocket-Accept: kic+/m7iJpYdltePH1tM1tzxbMI=
 DEBUG:    > Sec-WebSocket-Extensions: permessage-deflate
-DEBUG:    > date: Mon, 08 Jun 2026 17:03:24 GMT
+DEBUG:    > date: Mon, 08 Jun 2026 17:14:03 GMT
 DEBUG:    > server: uvicorn
 INFO:     connection open
 DEBUG:    = connection is OPEN
+2026-06-09 00:14:04,861 [INFO] app.main: \u2601\ufe0f  Cloudflare Tunnel URL: https://departments-connect-household-suited.trycloudflare.com
 DEBUG:    % sending keepalive ping
-DEBUG:    > PING '\x0bL9\x13' [text, 4 bytes]
-DEBUG:    < PONG '\x0bL9\x13' [text, 4 bytes]
+DEBUG:    > PING 22 53 d5 60 [binary, 4 bytes]
+DEBUG:    < PONG 22 53 d5 60 [binary, 4 bytes]
 DEBUG:    % received keepalive pong
 DEBUG:    % sending keepalive ping
-DEBUG:    > PING '\x1d>\u0609' [text, 4 bytes]
-DEBUG:    < PONG '\x1d>\u0609' [text, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING c3 fc 3a 87 [binary, 4 bytes]
-DEBUG:    < PONG c3 fc 3a 87 [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 29 13 cb 5f [binary, 4 bytes]
-DEBUG:    < PONG 29 13 cb 5f [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 89 ba c8 84 [binary, 4 bytes]
-DEBUG:    < PONG 89 ba c8 84 [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 8c 1f f5 f0 [binary, 4 bytes]
-DEBUG:    < PONG 8c 1f f5 f0 [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING db f7 71 38 [binary, 4 bytes]
-DEBUG:    < PONG db f7 71 38 [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 21 03 fa b5 [binary, 4 bytes]
-DEBUG:    < PONG 21 03 fa b5 [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-2026-06-09 00:04:50,099 [WARNING] app.automation.play_runner: Keep-alive failed for thanhchuapi1@gmail.com: Page.evaluate: Target page, context or browser has been closed
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING '\x07CW\x1c' [text, 4 bytes]
-DEBUG:    < PONG '\x07CW\x1c' [text, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 34 5f fe e6 [binary, 4 bytes]
-DEBUG:    < PONG 34 5f fe e6 [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 17 9e b2 0e [binary, 4 bytes]
-DEBUG:    < PONG 17 9e b2 0e [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING f3 05 80 15 [binary, 4 bytes]
-DEBUG:    < PONG f3 05 80 15 [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 06 42 90 2b [binary, 4 bytes]
-DEBUG:    < PONG 06 42 90 2b [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING '-mpW' [text, 4 bytes]
-DEBUG:    < PONG '-mpW' [text, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING d0 3d db bf [binary, 4 bytes]
-DEBUG:    < PONG d0 3d db bf [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING a9 17 de 77 [binary, 4 bytes]
-DEBUG:    < PONG a9 17 de 77 [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING b2 bd 43 24 [binary, 4 bytes]
-DEBUG:    < PONG b2 bd 43 24 [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING cb 65 ae 6b [binary, 4 bytes]
-DEBUG:    < PONG cb 65 ae 6b [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 2c db e3 01 [binary, 4 bytes]
-DEBUG:    < PONG 2c db e3 01 [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 'x0\x05%' [text, 4 bytes]
-DEBUG:    < PONG 'x0\x05%' [text, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 67 8c ef a9 [binary, 4 bytes]
-DEBUG:    < PONG 67 8c ef a9 [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING ed 06 24 36 [binary, 4 bytes]
-DEBUG:    < PONG ed 06 24 36 [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING c9 fe 2c 5f [binary, 4 bytes]
-DEBUG:    < PONG c9 fe 2c 5f [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING d6 d8 02 4e [binary, 4 bytes]
-DEBUG:    < PONG d6 d8 02 4e [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING b9 1d 1b be [binary, 4 bytes]
-DEBUG:    < PONG b9 1d 1b be [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 00 4d 38 ac [binary, 4 bytes]
-DEBUG:    < PONG 00 4d 38 ac [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING b5 00 27 3b [binary, 4 bytes]
-DEBUG:    < PONG b5 00 27 3b [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING f8 50 ae 5b [binary, 4 bytes]
-DEBUG:    < PONG f8 50 ae 5b [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING 87 ef 9d aa [binary, 4 bytes]
-DEBUG:    < PONG 87 ef 9d aa [binary, 4 bytes]
-DEBUG:    % received keepalive pong
-DEBUG:    % sending keepalive ping
-DEBUG:    > PING bd a0 60 16 [binary, 4 bytes]
-DEBUG:    < PONG bd a0 60 16 [binary, 4 bytes]
+DEBUG:    > PING 24 20 cb d4 [binary, 4 bytes]
+DEBUG:    < PONG 24 20 cb d4 [binary, 4 bytes]
 DEBUG:    % received keepalive pong
