@@ -71,7 +71,9 @@ async def tts_text(req: TextTTSRequest, db: AsyncSession = Depends(get_db)):
         text=req.text,
         voice_id=req.voice_id,
         language=req.language,
-        status="PENDING",`n            batch_id=batch_id,`n            webhook_url=req.webhook_url,
+        status="PENDING",
+            batch_id=None,
+            webhook_url=req.webhook_url,
     )
     db.add(task)
     await db.commit()
@@ -149,14 +151,17 @@ async def tts_batch(req: BatchTTSRequest, db: AsyncSession = Depends(get_db)):
             detail={"error": "voice_not_found", "message": f"Voice ID {req.voice_id} không tồn tại."}
         )
 
-    created_tasks = []`n    batch_id = str(uuid.uuid4())
+    created_tasks = []
+    batch_id = str(uuid.uuid4())
     for text in req.texts:
         task = Task(
             id=str(uuid.uuid4()),
             text=text,
             voice_id=req.voice_id,
             language=req.language,
-            status="PENDING",`n            batch_id=batch_id,`n            webhook_url=req.webhook_url,
+            status="PENDING",
+            batch_id=None,
+            webhook_url=req.webhook_url,
         )
         db.add(task)
         created_tasks.append(task)
@@ -195,4 +200,5 @@ async def tts_batch(req: BatchTTSRequest, db: AsyncSession = Depends(get_db)):
             for task in created_tasks
         ],
     }
+
 

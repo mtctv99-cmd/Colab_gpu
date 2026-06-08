@@ -9,9 +9,52 @@ from pathlib import Path
 
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 
-from app.config import DATA_DIR, PROFILES_DIR, GITHUB_USER, GITHUB_REPO, COLAB_NOTEBOOK_PATH, WORKER_KEEPALIVE_INTERVAL
+from app.config import DATA_DIR, PROFILES_DIR, GITHUB_USER, GITHUB_REPO, COLAB_NOTEBOOK_PATH, WORKER_KEEPALIVE_INTERVAL, QUOTA_RESET_HOURS
+from app.database import async_session
+from app.models import GoogleAccount
+from sqlalchemy import update
+from datetime import timedelta
 
 logger = logging.getLogger(__name__)
+
+
+# JS utilities for Playwright automation
+_JS_UTILS = """
+    window._colabUtils = {
+        findByText: (root, texts, tags) => {
+            const tagSet = tags ? new Set(tags.map(t => t.toUpperCase())) : null;
+            for (const el of root.querySelectorAll('*')) {
+                if (tagSet && !tagSet.has(el.tagName)) {
+                    if (el.shadowRoot) {
+                        const r = window._colabUtils.findByText(el.shadowRoot, texts, tags);
+                        if (r) return r;
+                    }
+                    continue;
+                }
+                const txt = (el.innerText || el.textContent || el.getAttribute('aria-label') || '').trim();
+                if (texts.some(t => txt === t || txt.startsWith(t))) return el;
+                if (el.shadowRoot) {
+                    const r = window._colabUtils.findByText(el.shadowRoot, texts, tags);
+                    if (r) return r;
+                }
+            }
+            return null;
+        },
+        shadowClick: (selector_func) => {
+            try { return selector_func(); } catch (e) { return 'err:' + e.message; }
+        },
+        checkGpuStatus: () => {
+            const host = document.querySelector('colab-connect-button');
+            if (!host || !host.shadowRoot) return 'unknown';
+            const txt = host.shadowRoot.innerText || '';
+            if (txt.includes('T4') || (txt.includes('Connected') && (txt.includes('RAM') || host.shadowRoot.querySelector('colab-usage-meter')))) {
+                return 't4_active';
+            }
+            return 'not_t4';
+        }
+    };
+"""
+
 
 # In-memory store for active browser contexts
 _active_contexts: dict[str, tuple] = {}  # email -> (playwright, context)
@@ -110,7 +153,10 @@ async def add_google_account_session(email: str) -> None:
             ignore_default_args=["--enable-automation"]
         )
         page = await context.new_page()
+        
+        await page.add_init_script(_JS_UTILS)
         await page.add_init_script("delete navigator.__proto__.webdriver;")
+
         await _dismiss_chrome_restore_pages(page)
         await page.goto("https://accounts.google.com/")
 
@@ -397,259 +443,118 @@ async def _dismiss_colab_security_warning(page: Page, email: str) -> bool:
     return False
 
 
+
 async def _check_quota_or_errors(page: Page) -> str | None:
     try:
-        err = await page.evaluate("""() => {
-            const patterns = [
-                "usage limit", "usage limits", "quota", "gpu limit", "gpu quota",
-                "cannot connect to gpu", "cannot connect to a gpu", "no gpu is available",
-                "runtime disconnected", "runtime has been disconnected",
-                "you cannot currently connect to a gpu", "colab usage limit",
-                "worker crash", "cuda is not available", "too many sessions",
-                "too many active sessions", "too many runtimes", "nhiều phiên đang hoạt động",
-                "usage limit reached"
-            ];
-            
-            // 1. Quét các dialogs đang hiển thị
-            const dialogs = document.querySelectorAll('colab-dialog, paper-dialog, mwc-dialog, dialog, [role="dialog"]');
-            for (const dlg of dialogs) {
-                if (dlg.offsetParent !== null) {
-                    const t = (dlg.innerText || dlg.textContent || "").toLowerCase();
-                    for (const p of patterns) {
-                        if (t.includes(p)) {
-                            return `dialog_found: [${p}] ${t.slice(0, 300)}`;
-                        }
-                    }
-                }
-            }
-            
-            // 2. Quét các phần tử thông báo lỗi
-            const notifications = document.querySelectorAll('.notification, colab-notification, .error, .warning, [class*="error"], [class*="warning"]');
-            for (const el of notifications) {
-                if (el.offsetParent !== null) {
-                    const t = (el.innerText || el.textContent || "").toLowerCase();
-                    for (const p of patterns) {
-                        if (t.includes(p)) {
-                            return `notification_found: [${p}] ${t.slice(0, 200)}`;
-                        }
-                    }
-                }
-            }
-            
-            // 3. Quét toàn bộ body
-            const bodyText = (document.body && document.body.innerText || "").toLowerCase();
-            const criticalPatterns = ["usage limit", "cannot connect to a gpu", "no gpu is available", "quá nhiều phiên đang hoạt động", "too many active sessions"];
-            for (const cp of criticalPatterns) {
-                if (bodyText.includes(cp)) {
-                    return `body_text_found: [${cp}]`;
-                }
-            }
-            return null;
-        }""")
-        return err
+        return await page.evaluate("window.__colabUtils.findElementByPatterns()")
     except Exception as e:
         return f"eval_error: {e}"
 
 
 async def _select_gpu_and_connect(page: Page, email: str) -> None:
-    logger.info("Starting GPU selection and connection for %s", email)
+    """Chọn GPU T4 và kết nối. Tối ưu: kiểm tra nếu đã có T4 thì bỏ qua, timeout 20s."""
+    logger.info("Starting GPU selection and connection for %s (Optimized)", email)
     
-    _SHADOW_FIND_BY_TEXT = """
-        function findByText(root, texts, tags) {
-            const tagSet = tags ? new Set(tags.map(t => t.toUpperCase())) : null;
-            for (const el of root.querySelectorAll('*')) {
-                if (tagSet && !tagSet.has(el.tagName)) {
-                    if (el.shadowRoot) {
-                        const r = findByText(el.shadowRoot, texts, tags);
-                        if (r) return r;
-                    }
-                    continue;
-                }
-                const txt = (el.innerText || el.textContent || el.getAttribute('aria-label') || '').trim();
-                if (texts.some(t => txt === t || txt.startsWith(t))) return el;
-                if (el.shadowRoot) {
-                    const r = findByText(el.shadowRoot, texts, tags);
-                    if (r) return r;
-                }
-            }
-            return null;
-        }
-    """
-    
-    # Bước 1: Mở Runtime menu
+    # ── Bước 0: Kiểm tra nếu đã có T4 ─────────────────────────────
     try:
-        await page.locator("#runtime-menu-button").click(timeout=5000, force=True)
-        runtime_menu = "runtime-menu:#runtime-menu-button"
-    except Exception:
-        runtime_menu = await _shadow_click(page, f"""() => {{
-            {_SHADOW_FIND_BY_TEXT}
-            const el = findByText(document, ['Runtime', 'Thời gian chạy', 'Thoi gian chay'], null);
-            if (el) {{ el.click(); return 'runtime-menu:' + el.tagName + '/' + el.id; }}
-            return 'runtime-menu-not-found';
-        }}""")
-    logger.info("Runtime menu action for %s: %s", email, runtime_menu)
-    await page.wait_for_timeout(300)
-    
-    # Bước 2: Click "Change runtime type"
+        gpu_status = await page.evaluate("window.__colabUtils.checkGpuStatus()")
+        if gpu_status == 't4_connected':
+            logger.info("Account %s already has T4 connected. Skipping setup.", email)
+            return
+        logger.info("Account %s status: %s. Proceeding with GPU setup.", email, gpu_status)
+    except Exception as e:
+        logger.warning("Could not check initial GPU status for %s: %s", email, e)
+
+    # ── Bước 1: Mở Runtime menu & Change runtime type ──────────────
+    # (Sử dụng logic cache và selector nhanh hơn)
+    async def fast_shadow_click(texts):
+        return await page.evaluate(f"window.__colabUtils.findByText(document, {texts}, null)?.click()")
+
+    # Runtime menu
     try:
-        await page.get_by_text("Change runtime type", exact=True).first.click(timeout=5000, force=True)
-        change_rt = "change-rt:text"
+        await page.locator("#runtime-menu-button").click(timeout=3000, force=True)
     except Exception:
-        change_rt = await _shadow_click(page, f"""() => {{
-            {_SHADOW_FIND_BY_TEXT}
-            const el = findByText(document, ['Change runtime type', 'Thay đổi loại thời gian chạy', 'Thay doi loai thoi gian chay'], null);
-            if (el) {{ el.click(); return 'change-rt:' + el.tagName; }}
-            return 'change-rt-not-found';
-        }}""")
-    logger.info("Change runtime type action for %s: %s", email, change_rt)
-    await page.wait_for_timeout(500)
+        await page.evaluate("window.__colabUtils.findByText(document, ['Runtime', 'Thời gian chạy', 'Thoi gian chay'], null)?.click()")
     
-    # Bước 3: Chọn T4 GPU trong dialog bằng DOM selector chính xác
-    gpu_result = await _shadow_click(page, """() => {
-        try {
-            const mwcDialog = document.querySelector('mwc-dialog, colab-dialog, paper-dialog, [role="dialog"]');
-            if (!mwcDialog) return 'no-dialog-found';
-            
-            // Đi vào colab-runtime-attributes-selector
-            const selector = mwcDialog.querySelector('colab-runtime-attributes-selector');
-            if (!selector || !selector.shadowRoot) return 'no-attributes-selector';
-            
-            // Tìm mwc-formfield thứ 2 (cho T4 GPU)
-            const formfields = selector.shadowRoot.querySelectorAll('mwc-formfield');
-            if (formfields.length < 2) return 'insufficient-formfields:' + formfields.length;
-            
-            const t4FormField = formfields[1]; // index 1 là T4 GPU
-            const mwcRadio = t4FormField.querySelector('mwc-radio');
-            if (!mwcRadio || !mwcRadio.shadowRoot) return 'no-mwc-radio';
-            
-            const input = mwcRadio.shadowRoot.querySelector('input');
-            if (!input) return 'no-input-found';
-            
-            input.click();
-            input.checked = true;
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-            return 't4-radio-clicked-successfully';
-        } catch (e) {
-            return 'error-selecting-t4:' + e.message;
-        }
+    await page.wait_for_timeout(200)
+
+    # Change runtime type
+    try:
+        await page.get_by_text("Change runtime type", exact=True).first.click(timeout=3000, force=True)
+    except Exception:
+        await page.evaluate("window.__colabUtils.findByText(document, ['Change runtime type', 'Thay đổi loại thời gian chạy'], null)?.click()")
+    
+    await page.wait_for_timeout(400)
+    
+    # ── Bước 2: Chọn T4 GPU ───────────────────────────────────────
+    gpu_result = await page.evaluate("""() => {
+        const mwcDialog = document.querySelector('mwc-dialog, colab-dialog, paper-dialog, [role="dialog"]');
+        if (!mwcDialog) return 'no-dialog';
+        const selector = mwcDialog.querySelector('colab-runtime-attributes-selector');
+        if (!selector?.shadowRoot) return 'no-selector';
+        const formfields = selector.shadowRoot.querySelectorAll('mwc-formfield');
+        if (formfields.length < 2) return 'no-t4-field';
+        const input = formfields[1].querySelector('mwc-radio')?.shadowRoot?.querySelector('input');
+        if (!input) return 'no-radio-input';
+        input.click();
+        input.checked = true;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        return 'ok';
     }""")
     logger.info("GPU select result for %s: %s", email, gpu_result)
-    await page.wait_for_timeout(300)
     
-    # Bước 4: Click Save trong mwc-dialog
-    save_result = await _shadow_click(page, """() => {
-        try {
-            const mwcDialog = document.querySelector('mwc-dialog, colab-dialog, paper-dialog, [role="dialog"]');
-            if (!mwcDialog) return 'no-dialog-found';
-            
-            // Nút Save trong mwc-dialog thường nằm ở phần slot="primaryAction" hoặc có dialogAction="ok"
-            const saveBtn = mwcDialog.querySelector('[dialogAction="ok"], [dialogaction="ok"], button#ok, md-filled-button, paper-button');
-            if (saveBtn) {
-                saveBtn.click();
-                return 'save-clicked-successfully:' + saveBtn.tagName;
-            }
-            
-            // Fallback tìm tất cả các nút trong dialog chứa chữ Save hoặc Lưu
-            const buttons = mwcDialog.querySelectorAll('button, paper-button, md-filled-button, [role="button"]');
-            for (const btn of buttons) {
-                const txt = (btn.innerText || btn.textContent || '').trim().toLowerCase();
-                if (txt === 'save' || txt === 'lưu' || txt === 'lưu lại' || txt === 'ok') {
-                    btn.click();
-                    return 'save-clicked-via-text-fallback:' + btn.tagName;
-                }
-            }
-            return 'save-button-not-found';
-        } catch (e) {
-            return 'error-clicking-save:' + e.message;
-        }
+    # Click Save
+    await page.evaluate("""() => {
+        const mwcDialog = document.querySelector('mwc-dialog, colab-dialog, paper-dialog, [role="dialog"]');
+        const saveBtn = mwcDialog?.querySelector('[dialogAction="ok"], [dialogaction="ok"], button#ok, md-filled-button, paper-button');
+        saveBtn?.click();
     }""")
-    logger.info("Save runtime result for %s: %s", email, save_result)
     await page.wait_for_timeout(500)
     
-    # Kiểm tra quota trước khi kết nối
-    quota_err = await _check_quota_or_errors(page)
-    if quota_err:
-        logger.error("Quota or error detected before connect for %s: %s", email, quota_err)
-        raise RuntimeError(f"Colab quota or limit reached: {quota_err}")
-        
-    # Bước 5: Click Connect
-    logger.info("Connecting runtime for %s...", email)
-    connect_result = await _shadow_click(page, """() => {
-        const host = document.querySelector('colab-connect-button');
-        if (!host) return 'no-connect-button';
-        const shadow = host.shadowRoot;
-        if (shadow) {
-            const txt = shadow.innerText || '';
-            if (txt.includes('Connected') || txt.includes('RAM') || txt.includes('RAM/Disk') || shadow.querySelector('colab-usage-meter')) {
-                return 'already-connected';
-            }
-            const btn = shadow.querySelector('#connect, colab-toolbar-button, paper-button, md-filled-button');
-            if (btn) { btn.click(); return 'shadow-btn:' + btn.tagName; }
-        }
-        host.click();
-        return 'host-clicked';
+    # ── Bước 3: Kết nối và Đợi (Timeout 20s) ───────────────────────
+    logger.info("Connecting runtime for %s (20s timeout)...", email)
+    await page.evaluate("""() => {
+        const btn = document.querySelector('colab-connect-button')?.shadowRoot?.querySelector('#connect, colab-toolbar-button');
+        btn?.click();
     }""")
-    logger.info("Connect action result for %s: %s", email, connect_result)
     
-    # Chờ runtime connected ngắn. Colab có thể queue Run All trong lúc runtime đang connect,
-    # nên không cần block 30s ở đây.
+    start_time = asyncio.get_event_loop().time()
     connected = False
-    for i in range(12):
-        await page.wait_for_timeout(500)
+    
+    while asyncio.get_event_loop().time() - start_time < 20:
+        # Kiểm tra quota trước
         quota_err = await _check_quota_or_errors(page)
         if quota_err:
-            logger.error("Quota error while waiting connect for %s: %s", email, quota_err)
-            raise RuntimeError(f"Colab quota or limit reached: {quota_err}")
+            logger.error("Quota error for %s: %s", email, quota_err)
+            await _mark_account_quota_reached(email)
+            raise RuntimeError(f"Colab quota reached: {quota_err}")
             
-        try:
-            ram_visible = await page.evaluate("""() => {
-                function findElement(root, selectors) {
-                    if (!root) return null;
-                    for (const sel of selectors) {
-                        try {
-                            const el = root.querySelector(sel);
-                            if (el) return el;
-                        } catch(e){}
-                    }
-                    if (root.shadowRoot) {
-                        const el = findElement(root.shadowRoot, selectors);
-                        if (el) return el;
-                    }
-                    if (root.children) {
-                        for (let i = 0; i < root.children.length; i++) {
-                            const el = findElement(root.children[i], selectors);
-                            if (el) return el;
-                        }
-                    }
-                    return null;
-                }
-                
-                const el = findElement(document.body, ['colab-usage-meter', '.memory-display', '[title*="RAM"]', '[title*="Disk"]', 'colab-connect-button']);
-                if (el) {
-                    if (el.tagName === 'COLAB-CONNECT-BUTTON') {
-                        const shadow = el.shadowRoot;
-                        if (shadow) {
-                            const txt = shadow.innerText || '';
-                            if (txt.includes('Connected') || txt.includes('RAM') || txt.includes('RAM/Disk') || shadow.querySelector('colab-usage-meter')) {
-                                return 'connected';
-                            }
-                        }
-                    } else {
-                        return 'connected';
-                    }
-                }
-                return 'waiting';
-            }""")
-            if ram_visible == "connected":
-                connected = True
-                logger.info("Runtime connected after %.1fs for %s", (i + 1) * 0.5, email)
-                break
-        except Exception:
-            pass
-            
+        if await page.evaluate("window.__colabUtils.checkRamConnected()"):
+            connected = True
+            logger.info("Runtime connected for %s in %.1fs", email, asyncio.get_event_loop().time() - start_time)
+            break
+        await asyncio.sleep(1)
+        
     if not connected:
-        logger.warning("Runtime not connected after 6s for %s, running all anyway", email)
+        logger.warning("Connection timeout (20s) for %s. Marking as quota reached.", email)
+        await _mark_account_quota_reached(email)
+        raise RuntimeError(f"Connection timeout for {email}")
 
+async def _mark_account_quota_reached(email: str) -> None:
+    """Đánh dấu tài khoản hết quota, nghỉ 16h."""
+    try:
+        from datetime import datetime, timezone, timedelta
+        reset_time = datetime.now(timezone.utc) + timedelta(hours=QUOTA_RESET_HOURS)
+        async with async_session() as db:
+            await db.execute(
+                update(GoogleAccount)
+                .where(GoogleAccount.email == email)
+                .values(status="OFFLINE", quota_reset_at=reset_time)
+            )
+            await db.commit()
+        logger.info("Account %s marked OFFLINE for %d hours due to quota/timeout.", email, QUOTA_RESET_HOURS)
+    except Exception as e:
+        logger.error("Failed to mark quota for %s: %s", email, e)
 
 async def start_colab_worker(email: str, server_url: str) -> None:
     """Start a Colab worker: open the notebook, select GPU T4, fill configuration, run-all, and keep-alive."""
@@ -677,7 +582,10 @@ async def start_colab_worker(email: str, server_url: str) -> None:
             viewport={"width": 1280, "height": 800},
         )
         page = await context.new_page()
+        
+        await page.add_init_script(_JS_UTILS)
         await page.add_init_script("delete navigator.__proto__.webdriver;")
+
 
         # Check if GitHub settings are default. If so, fallback to local notebook upload.
         is_default_github = (GITHUB_USER == "your-github-username" or GITHUB_REPO == "your-repo-name")
