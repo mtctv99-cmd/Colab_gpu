@@ -595,7 +595,7 @@ async def _select_gpu_and_connect(page: Page, email: str) -> None:
     start_time = asyncio.get_event_loop().time()
     connected = False
     
-    while asyncio.get_event_loop().time() - start_time < 20:
+    while asyncio.get_event_loop().time() - start_time < 90:  # T4 GPU can take 30-90s to allocate
         # Kiểm tra quota trước
         quota_err = await _check_quota_or_errors(page)
         if quota_err:
@@ -610,7 +610,7 @@ async def _select_gpu_and_connect(page: Page, email: str) -> None:
         await asyncio.sleep(1)
         
     if not connected:
-        logger.warning("Connection timeout (20s) for %s. Marking as quota reached.", email)
+        logger.warning("Connection timeout (90s) for %s. T4 GPU allocation failed or queue full.", email)
         await _mark_account_quota_reached(email)
         raise RuntimeError(f"Connection timeout for {email}")
 
