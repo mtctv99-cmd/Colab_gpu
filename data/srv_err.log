@@ -1,142 +1,37 @@
-INFO:     Started server process [19664]
+INFO:     Started server process [16232]
 INFO:     Waiting for application startup.
-2026-06-09 00:49:03,276 [INFO] app.main: Cleaning up zombie browser processes...
-2026-06-09 00:49:04,236 [INFO] app.main: Initializing database...
-2026-06-09 00:49:04,249 [INFO] app.main: Database ready.
-2026-06-09 00:49:04,249 [INFO] app.main: Cleaning up orphan tasks...
-2026-06-09 00:49:04,263 [INFO] app.main: Orphan tasks cleaned up successfully.
-2026-06-09 00:49:04,263 [INFO] app.main: Scale-down background loop started.
+2026-06-09 00:58:46,645 [INFO] app.main: Cleaning up zombie browser processes...
+2026-06-09 00:58:47,514 [INFO] app.main: Initializing database...
+2026-06-09 00:58:47,532 [INFO] app.main: Database ready.
+2026-06-09 00:58:47,533 [INFO] app.main: Cleaning up orphan tasks...
+2026-06-09 00:58:47,544 [INFO] app.main: Orphan tasks cleaned up successfully.
+2026-06-09 00:58:47,545 [INFO] app.main: Scale-down background loop started.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
-INFO:     ('127.0.0.1', 60199) - "WebSocket /ws/dashboard" [accepted]
+INFO:     ('127.0.0.1', 53321) - "WebSocket /ws/dashboard" [accepted]
 INFO:     connection open
-2026-06-09 00:49:59,157 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi1@gmail.com...
-2026-06-09 00:50:00,767 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi1@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:50:04,379 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi1@gmail.com (Optimized)
-2026-06-09 00:50:04,406 [WARNING] app.automation.play_runner: Could not check login status: Page.evaluate: SyntaxError: Unexpected identifier 's'
-    at eval (<anonymous>)
-    at UtilityScript.evaluate (<anonymous>:234:30)
-    at UtilityScript.<anonymous> (<anonymous>:1:44)
-2026-06-09 00:50:04,420 [INFO] app.automation.play_runner: Account thanhchuapi1@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:50:05,501 [INFO] app.automation.play_runner: GPU select result for thanhchuapi1@gmail.com: ok
-2026-06-09 00:50:06,036 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi1@gmail.com (20s timeout)...
-2026-06-09 00:50:26,803 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi1@gmail.com. Marking as quota reached.
-2026-06-09 00:50:26,814 [INFO] app.automation.play_runner: Account thanhchuapi1@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 00:50:26,814 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi1@gmail.com: Connection timeout for thanhchuapi1@gmail.com
-2026-06-09 00:50:27,010 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 00:50:27,494 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi1@gmail.com, trying next available account: Connection timeout for thanhchuapi1@gmail.com
-2026-06-09 00:50:27,514 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi2@gmail.com...
-2026-06-09 00:50:29,754 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi2@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:50:33,293 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi2@gmail.com (Optimized)
-2026-06-09 00:50:33,317 [WARNING] app.automation.play_runner: Could not check login status: Page.evaluate: SyntaxError: Unexpected identifier 's'
-    at eval (<anonymous>)
-    at UtilityScript.evaluate (<anonymous>:234:30)
-    at UtilityScript.<anonymous> (<anonymous>:1:44)
-2026-06-09 00:50:33,336 [INFO] app.automation.play_runner: Account thanhchuapi2@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:50:34,310 [INFO] app.automation.play_runner: GPU select result for thanhchuapi2@gmail.com: ok
-2026-06-09 00:50:34,860 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi2@gmail.com (20s timeout)...
-2026-06-09 00:50:55,728 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi2@gmail.com. Marking as quota reached.
-2026-06-09 00:50:55,753 [INFO] app.automation.play_runner: Account thanhchuapi2@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 00:50:55,754 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi2@gmail.com: Connection timeout for thanhchuapi2@gmail.com
-2026-06-09 00:50:56,045 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 00:50:56,539 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi2@gmail.com, trying next available account: Connection timeout for thanhchuapi2@gmail.com
-2026-06-09 00:50:56,555 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi3@gmail.com...
-2026-06-09 00:50:58,722 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi3@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:51:02,742 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi3@gmail.com (Optimized)
-2026-06-09 00:51:02,790 [WARNING] app.automation.play_runner: Could not check login status: Page.evaluate: SyntaxError: Unexpected identifier 's'
-    at eval (<anonymous>)
-    at UtilityScript.evaluate (<anonymous>:234:30)
-    at UtilityScript.<anonymous> (<anonymous>:1:44)
-2026-06-09 00:51:02,824 [INFO] app.automation.play_runner: Account thanhchuapi3@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:51:03,834 [INFO] app.automation.play_runner: GPU select result for thanhchuapi3@gmail.com: ok
-2026-06-09 00:51:04,394 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi3@gmail.com (20s timeout)...
-2026-06-09 00:51:25,195 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi3@gmail.com. Marking as quota reached.
-2026-06-09 00:51:25,206 [INFO] app.automation.play_runner: Account thanhchuapi3@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 00:51:25,208 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi3@gmail.com: Connection timeout for thanhchuapi3@gmail.com
-2026-06-09 00:51:25,375 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 00:51:25,788 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi3@gmail.com, trying next available account: Connection timeout for thanhchuapi3@gmail.com
-2026-06-09 00:51:25,805 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi4@gmail.com...
-2026-06-09 00:51:28,019 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi4@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:51:31,992 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi4@gmail.com (Optimized)
-2026-06-09 00:51:32,003 [WARNING] app.automation.play_runner: Could not check login status: Page.evaluate: SyntaxError: Unexpected identifier 's'
-    at eval (<anonymous>)
-    at UtilityScript.evaluate (<anonymous>:234:30)
-    at UtilityScript.<anonymous> (<anonymous>:1:44)
-2026-06-09 00:51:32,012 [INFO] app.automation.play_runner: Account thanhchuapi4@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:51:32,861 [INFO] app.automation.play_runner: GPU select result for thanhchuapi4@gmail.com: ok
-2026-06-09 00:51:33,414 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi4@gmail.com (20s timeout)...
-2026-06-09 00:51:54,192 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi4@gmail.com. Marking as quota reached.
-2026-06-09 00:51:54,214 [INFO] app.automation.play_runner: Account thanhchuapi4@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 00:51:54,216 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi4@gmail.com: Connection timeout for thanhchuapi4@gmail.com
-2026-06-09 00:51:54,467 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 00:51:55,062 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi4@gmail.com, trying next available account: Connection timeout for thanhchuapi4@gmail.com
-2026-06-09 00:51:55,077 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi5@gmail.com...
-2026-06-09 00:51:57,796 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi5@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:52:01,430 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi5@gmail.com (Optimized)
-2026-06-09 00:52:01,439 [WARNING] app.automation.play_runner: Could not check login status: Page.evaluate: SyntaxError: Unexpected identifier 's'
-    at eval (<anonymous>)
-    at UtilityScript.evaluate (<anonymous>:234:30)
-    at UtilityScript.<anonymous> (<anonymous>:1:44)
-2026-06-09 00:52:01,455 [INFO] app.automation.play_runner: Account thanhchuapi5@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:52:02,414 [INFO] app.automation.play_runner: GPU select result for thanhchuapi5@gmail.com: ok
-2026-06-09 00:52:02,953 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi5@gmail.com (20s timeout)...
-2026-06-09 00:52:23,733 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi5@gmail.com. Marking as quota reached.
-2026-06-09 00:52:23,757 [INFO] app.automation.play_runner: Account thanhchuapi5@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 00:52:23,758 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi5@gmail.com: Connection timeout for thanhchuapi5@gmail.com
-2026-06-09 00:52:23,994 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 00:52:24,622 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi5@gmail.com, trying next available account: Connection timeout for thanhchuapi5@gmail.com
-2026-06-09 00:52:24,649 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi6@gmail.com...
-2026-06-09 00:52:27,601 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi6@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:52:31,148 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi6@gmail.com (Optimized)
-2026-06-09 00:52:31,158 [WARNING] app.automation.play_runner: Could not check login status: Page.evaluate: SyntaxError: Unexpected identifier 's'
-    at eval (<anonymous>)
-    at UtilityScript.evaluate (<anonymous>:234:30)
-    at UtilityScript.<anonymous> (<anonymous>:1:44)
-2026-06-09 00:52:31,172 [INFO] app.automation.play_runner: Account thanhchuapi6@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:52:32,011 [INFO] app.automation.play_runner: GPU select result for thanhchuapi6@gmail.com: ok
-2026-06-09 00:52:32,555 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi6@gmail.com (20s timeout)...
-2026-06-09 00:52:53,214 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi6@gmail.com. Marking as quota reached.
-2026-06-09 00:52:53,226 [INFO] app.automation.play_runner: Account thanhchuapi6@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 00:52:53,227 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi6@gmail.com: Connection timeout for thanhchuapi6@gmail.com
-2026-06-09 00:52:53,412 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 00:52:53,918 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi6@gmail.com, trying next available account: Connection timeout for thanhchuapi6@gmail.com
-2026-06-09 00:52:53,933 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi7@gmail.com...
-2026-06-09 00:52:55,649 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi7@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:52:59,315 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi7@gmail.com (Optimized)
-2026-06-09 00:52:59,337 [WARNING] app.automation.play_runner: Could not check login status: Page.evaluate: SyntaxError: Unexpected identifier 's'
-    at eval (<anonymous>)
-    at UtilityScript.evaluate (<anonymous>:234:30)
-    at UtilityScript.<anonymous> (<anonymous>:1:44)
-2026-06-09 00:52:59,352 [INFO] app.automation.play_runner: Account thanhchuapi7@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:53:00,284 [INFO] app.automation.play_runner: GPU select result for thanhchuapi7@gmail.com: ok
-2026-06-09 00:53:00,824 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi7@gmail.com (20s timeout)...
-2026-06-09 00:53:21,539 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi7@gmail.com. Marking as quota reached.
-2026-06-09 00:53:21,552 [INFO] app.automation.play_runner: Account thanhchuapi7@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 00:53:21,552 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi7@gmail.com: Connection timeout for thanhchuapi7@gmail.com
-2026-06-09 00:53:21,723 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 00:53:22,240 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi7@gmail.com, trying next available account: Connection timeout for thanhchuapi7@gmail.com
-2026-06-09 00:53:22,254 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi8@gmail.com...
-2026-06-09 00:53:24,506 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi8@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:53:28,034 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi8@gmail.com (Optimized)
-2026-06-09 00:53:28,041 [WARNING] app.automation.play_runner: Could not check login status: Page.evaluate: SyntaxError: Unexpected identifier 's'
-    at eval (<anonymous>)
-    at UtilityScript.evaluate (<anonymous>:234:30)
-    at UtilityScript.<anonymous> (<anonymous>:1:44)
-2026-06-09 00:53:28,052 [INFO] app.automation.play_runner: Account thanhchuapi8@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:53:28,860 [INFO] app.automation.play_runner: GPU select result for thanhchuapi8@gmail.com: ok
-2026-06-09 00:53:29,400 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi8@gmail.com (20s timeout)...
-2026-06-09 00:53:50,224 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi8@gmail.com. Marking as quota reached.
-2026-06-09 00:53:50,238 [INFO] app.automation.play_runner: Account thanhchuapi8@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 00:53:50,238 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi8@gmail.com: Connection timeout for thanhchuapi8@gmail.com
-2026-06-09 00:53:50,405 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 00:53:50,874 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi8@gmail.com, trying next available account: Connection timeout for thanhchuapi8@gmail.com
-2026-06-09 00:53:50,889 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi9@gmail.com...
-2026-06-09 00:53:52,205 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi9@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:53:55,690 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi9@gmail.com (Optimized)
-2026-06-09 00:53:55,708 [WARNING] app.automation.play_runner: Could not check login status: Page.evaluate: SyntaxError: Unexpected identifier 's'
-    at eval (<anonymous>)
-    at UtilityScript.evaluate (<anonymous>:234:30)
-    at UtilityScript.<anonymous> (<anonymous>:1:44)
-2026-06-09 00:53:55,724 [INFO] app.automation.play_runner: Account thanhchuapi9@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:53:56,608 [INFO] app.automation.play_runner: GPU select result for thanhchuapi9@gmail.com: ok
-2026-06-09 00:53:57,147 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi9@gmail.com (20s timeout)...
+2026-06-09 00:58:51,799 [INFO] app.main: \u2601\ufe0f  Cloudflare Tunnel URL: https://depot-wider-sky-resident.trycloudflare.com
+2026-06-09 00:59:52,074 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi1@gmail.com...
+2026-06-09 00:59:53,288 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi1@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
+2026-06-09 00:59:56,764 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi1@gmail.com (Optimized)
+2026-06-09 00:59:56,794 [INFO] app.automation.play_runner: Account thanhchuapi1@gmail.com status: disconnected. Proceeding with GPU setup.
+2026-06-09 00:59:57,640 [INFO] app.automation.play_runner: GPU select result for thanhchuapi1@gmail.com: ok
+2026-06-09 00:59:58,184 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi1@gmail.com (90s timeout)...
+2026-06-09 01:01:28,908 [WARNING] app.automation.play_runner: Connection timeout (90s) for thanhchuapi1@gmail.com. T4 GPU allocation failed or queue full.
+2026-06-09 01:01:28,922 [INFO] app.automation.play_runner: Account thanhchuapi1@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
+2026-06-09 01:01:28,922 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi1@gmail.com: Connection timeout for thanhchuapi1@gmail.com
+2026-06-09 01:01:29,070 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
+2026-06-09 01:01:29,565 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi1@gmail.com, trying next available account: Connection timeout for thanhchuapi1@gmail.com
+2026-06-09 01:01:29,584 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi2@gmail.com...
+2026-06-09 01:01:31,044 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi2@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
+2026-06-09 01:01:34,506 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi2@gmail.com (Optimized)
+2026-06-09 01:01:34,527 [INFO] app.automation.play_runner: Account thanhchuapi2@gmail.com status: disconnected. Proceeding with GPU setup.
+2026-06-09 01:01:35,425 [INFO] app.automation.play_runner: GPU select result for thanhchuapi2@gmail.com: ok
+2026-06-09 01:01:35,962 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi2@gmail.com (90s timeout)...
+2026-06-09 01:03:06,641 [WARNING] app.automation.play_runner: Connection timeout (90s) for thanhchuapi2@gmail.com. T4 GPU allocation failed or queue full.
+2026-06-09 01:03:06,653 [INFO] app.automation.play_runner: Account thanhchuapi2@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
+2026-06-09 01:03:06,654 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi2@gmail.com: Connection timeout for thanhchuapi2@gmail.com
+2026-06-09 01:03:06,781 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
+2026-06-09 01:03:07,272 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi2@gmail.com, trying next available account: Connection timeout for thanhchuapi2@gmail.com
+2026-06-09 01:03:07,284 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi3@gmail.com...
+2026-06-09 01:03:09,690 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi3@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb

@@ -586,7 +586,7 @@ async def _select_gpu_and_connect(page: Page, email: str) -> None:
     await page.wait_for_timeout(500)
     
     # ── Bước 3: Kết nối và Đợi (Timeout 20s) ───────────────────────
-    logger.info("Connecting runtime for %s (20s timeout)...", email)
+    logger.info("Connecting runtime for %s (90s timeout)...", email)
     await page.evaluate("""() => {
         const btn = document.querySelector('colab-connect-button')?.shadowRoot?.querySelector('#connect, colab-toolbar-button');
         btn?.click();
@@ -720,17 +720,19 @@ async def start_colab_worker(email: str, server_url: str) -> None:
         await page.evaluate(_JS_UTILS)
 
         # 1. Chọn GPU T4 & Connect trước khi điền tham số
-        await _select_gpu_and_connect(page, email)
-
-        # 2. Điền form parameters (SERVER_URL và EMAIL)
+        # 1. Điền form parameters TRƯỚC (đề phòng Run Anyway popup)
         await _fill_colab_param(page, "SERVER_URL", server_url)
         await _fill_colab_param(page, "EMAIL", email)
 
-        # 3. Gửi Ctrl+F9 để Run All cells
+        # 2. Chọn GPU T4 & Connect
+        await _select_gpu_and_connect(page, email)
+
+        # 3. Dismiss Run anyway ngay sau khi Connect (có thể popup trong lúc chờ)
+        dismissed = await _dismiss_colab_security_warning(page, email)
+
+        # 4. Gửi Ctrl+F9 để Run All cells
         logger.info("Sending Run All (Ctrl+F9) for %s", email)
         await page.keyboard.press("Control+F9")
-
-        dismissed = await _dismiss_colab_security_warning(page, email)
 
         if dismissed:
             try:
