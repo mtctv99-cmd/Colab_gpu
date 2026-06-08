@@ -479,26 +479,28 @@ async def _check_quota_or_errors(page: Page) -> str | None:
 
 
 async def _check_login_required(page) -> bool:
-    """Phát hiện trang yêu cầu login Google.
-    Trả True nếu cần login lại.
-    """
+    # Phat hien trang yeu cau login Google. URL truoc, JS evaluate fallback
     try:
         url = page.url
-        if "accounts.google.com" in url or "ServiceLogin" in url or "signin" in url:
-            return True
-        result = await page.evaluate("""() => {
-            const text = (document.body && document.body.innerText || '').toLowerCase();
-            const indicators = ['sign in to your google account', 'enter your password', 'wrong password',
-                               'nhập mật khẩu', 'đăng nhập', 'verify it\'s you'];
-            for (const ind of indicators) {
-                if (text.includes(ind)) return true;
-            }
-            // Check for password input field
-            return !!document.querySelector('input[type="password"]');
-        }""")
+        login_urls = ["accounts.google.com", "ServiceLogin", "signin", "signup", "consent.google", "/login"]
+        for lu in login_urls:
+            if lu in url:
+                logger.info("Login detected via URL: %s", url)
+                return True
+    except Exception as e:
+        logger.debug("URL check failed: %s", str(e)[:100])
+
+    try:
+        js_check = '() => {' + \
+            'const text = (document.body && document.body.innerText || "").toLowerCase();' + \
+            'const inds = ["sign in to your google", "enter your password", "nhap mat khau", "dang nhap", "wrong password", "use your google account"];' + \
+            'for (const i of inds) { if (text.includes(i)) return true; }' + \
+            'return !!document.querySelector("input[type=password]");' + \
+            '}'
+        result = await page.evaluate(js_check)
         return bool(result)
     except Exception as e:
-        logger.warning("Could not check login status: %s", e)
+        logger.debug("Login JS check failed: %s", str(e)[:100])
         return False
 
 
