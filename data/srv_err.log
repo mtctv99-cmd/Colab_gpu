@@ -1,209 +1,65 @@
-INFO:     Started server process [14136]
+INFO:     Started server process [58416]
 INFO:     Waiting for application startup.
-2026-06-09 00:19:34,781 [INFO] app.main: Cleaning up zombie browser processes...
-2026-06-09 00:19:35,504 [INFO] app.main: Initializing database...
-2026-06-09 00:19:35,523 [INFO] app.main: Database ready.
-2026-06-09 00:19:35,524 [INFO] app.main: Cleaning up orphan tasks...
-2026-06-09 00:19:35,538 [INFO] app.main: Orphan tasks cleaned up successfully.
-2026-06-09 00:19:35,538 [INFO] app.main: Scale-down background loop started.
+2026-06-09 00:39:58,408 [INFO] app.main: Cleaning up zombie browser processes...
+2026-06-09 00:39:59,169 [INFO] app.main: Initializing database...
+2026-06-09 00:39:59,185 [INFO] app.main: Database ready.
+2026-06-09 00:39:59,185 [INFO] app.main: Cleaning up orphan tasks...
+2026-06-09 00:39:59,198 [INFO] app.main: Orphan tasks cleaned up successfully.
+2026-06-09 00:39:59,198 [INFO] app.main: Scale-down background loop started.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
-INFO:     ('127.0.0.1', 59638) - "WebSocket /ws/dashboard" [accepted]
+INFO:     ('127.0.0.1', 53441) - "WebSocket /ws/dashboard" [accepted]
 INFO:     connection open
-INFO:     ('127.0.0.1', 52735) - "WebSocket /ws/dashboard" [accepted]
+INFO:     ('127.0.0.1', 64832) - "WebSocket /ws/dashboard" [accepted]
 INFO:     connection open
-2026-06-09 00:19:40,712 [INFO] app.main: \u2601\ufe0f  Cloudflare Tunnel URL: https://radio-birds-clarke-clara.trycloudflare.com
-2026-06-09 00:24:14,389 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi1@gmail.com...
-2026-06-09 00:24:15,697 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi1@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:24:19,133 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi1@gmail.com (Optimized)
-2026-06-09 00:24:19,152 [INFO] app.automation.play_runner: Account thanhchuapi1@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:24:19,962 [INFO] app.automation.play_runner: GPU select result for thanhchuapi1@gmail.com: ok
-2026-06-09 00:24:20,507 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi1@gmail.com (20s timeout)...
-2026-06-09 00:24:41,072 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi1@gmail.com. Marking as quota reached.
-2026-06-09 00:24:41,084 [INFO] app.automation.play_runner: Account thanhchuapi1@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 00:24:41,084 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi1@gmail.com: Connection timeout for thanhchuapi1@gmail.com
-2026-06-09 00:24:41,246 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 00:24:41,874 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi1@gmail.com, trying next available account: Connection timeout for thanhchuapi1@gmail.com
-2026-06-09 00:24:41,893 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi2@gmail.com...
-2026-06-09 00:24:43,336 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi2@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:24:46,780 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi2@gmail.com (Optimized)
-2026-06-09 00:24:46,802 [INFO] app.automation.play_runner: Account thanhchuapi2@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:24:47,780 [INFO] app.automation.play_runner: GPU select result for thanhchuapi2@gmail.com: ok
-2026-06-09 00:24:48,333 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi2@gmail.com (20s timeout)...
-2026-06-09 00:25:08,890 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi2@gmail.com. Marking as quota reached.
-2026-06-09 00:25:08,897 [INFO] app.automation.play_runner: Account thanhchuapi2@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 00:25:08,899 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi2@gmail.com: Connection timeout for thanhchuapi2@gmail.com
-2026-06-09 00:25:09,103 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 00:25:09,627 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi2@gmail.com, trying next available account: Connection timeout for thanhchuapi2@gmail.com
-2026-06-09 00:25:09,641 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi3@gmail.com...
-2026-06-09 00:25:11,183 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi3@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:25:14,602 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi3@gmail.com (Optimized)
-2026-06-09 00:25:14,633 [INFO] app.automation.play_runner: Account thanhchuapi3@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:25:15,508 [INFO] app.automation.play_runner: GPU select result for thanhchuapi3@gmail.com: ok
-2026-06-09 00:25:16,048 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi3@gmail.com (20s timeout)...
-2026-06-09 00:25:36,576 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi3@gmail.com. Marking as quota reached.
-2026-06-09 00:25:36,585 [INFO] app.automation.play_runner: Account thanhchuapi3@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 00:25:36,586 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi3@gmail.com: Connection timeout for thanhchuapi3@gmail.com
-2026-06-09 00:25:36,802 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 00:25:37,233 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi3@gmail.com, trying next available account: Connection timeout for thanhchuapi3@gmail.com
-2026-06-09 00:25:37,248 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi4@gmail.com...
-2026-06-09 00:25:38,679 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi4@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:25:41,537 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi4@gmail.com (Optimized)
-2026-06-09 00:25:41,557 [INFO] app.automation.play_runner: Account thanhchuapi4@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:25:42,355 [INFO] app.automation.play_runner: GPU select result for thanhchuapi4@gmail.com: ok
-2026-06-09 00:25:42,887 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi4@gmail.com (20s timeout)...
-2026-06-09 00:26:03,420 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi4@gmail.com. Marking as quota reached.
-2026-06-09 00:26:03,431 [INFO] app.automation.play_runner: Account thanhchuapi4@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 00:26:03,432 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi4@gmail.com: Connection timeout for thanhchuapi4@gmail.com
-2026-06-09 00:26:03,648 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 00:26:04,189 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi4@gmail.com, trying next available account: Connection timeout for thanhchuapi4@gmail.com
-2026-06-09 00:26:04,200 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi5@gmail.com...
-2026-06-09 00:26:05,740 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi5@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:26:09,478 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi5@gmail.com (Optimized)
-2026-06-09 00:26:09,495 [INFO] app.automation.play_runner: Account thanhchuapi5@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:26:10,319 [INFO] app.automation.play_runner: GPU select result for thanhchuapi5@gmail.com: ok
-2026-06-09 00:26:10,854 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi5@gmail.com (20s timeout)...
-2026-06-09 00:26:31,418 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi5@gmail.com. Marking as quota reached.
-2026-06-09 00:26:31,426 [INFO] app.automation.play_runner: Account thanhchuapi5@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 00:26:31,426 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi5@gmail.com: Connection timeout for thanhchuapi5@gmail.com
-2026-06-09 00:26:31,635 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 00:26:32,130 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi5@gmail.com, trying next available account: Connection timeout for thanhchuapi5@gmail.com
-2026-06-09 00:26:32,139 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi6@gmail.com...
-2026-06-09 00:26:33,648 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi6@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:26:37,044 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi6@gmail.com (Optimized)
-2026-06-09 00:26:37,055 [INFO] app.automation.play_runner: Account thanhchuapi6@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:26:37,891 [INFO] app.automation.play_runner: GPU select result for thanhchuapi6@gmail.com: ok
-2026-06-09 00:26:38,430 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi6@gmail.com (20s timeout)...
-2026-06-09 00:26:59,017 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi6@gmail.com. Marking as quota reached.
-2026-06-09 00:26:59,027 [INFO] app.automation.play_runner: Account thanhchuapi6@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 00:26:59,027 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi6@gmail.com: Connection timeout for thanhchuapi6@gmail.com
-2026-06-09 00:26:59,235 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 00:26:59,717 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi6@gmail.com, trying next available account: Connection timeout for thanhchuapi6@gmail.com
-2026-06-09 00:26:59,726 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi7@gmail.com...
-2026-06-09 00:27:01,112 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi7@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:27:04,485 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi7@gmail.com (Optimized)
-2026-06-09 00:27:04,500 [INFO] app.automation.play_runner: Account thanhchuapi7@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:27:05,343 [INFO] app.automation.play_runner: GPU select result for thanhchuapi7@gmail.com: ok
-2026-06-09 00:27:05,885 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi7@gmail.com (20s timeout)...
-2026-06-09 00:27:26,390 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi7@gmail.com. Marking as quota reached.
-2026-06-09 00:27:26,402 [INFO] app.automation.play_runner: Account thanhchuapi7@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 00:27:26,402 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi7@gmail.com: Connection timeout for thanhchuapi7@gmail.com
-2026-06-09 00:27:26,604 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 00:27:27,119 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi7@gmail.com, trying next available account: Connection timeout for thanhchuapi7@gmail.com
-2026-06-09 00:27:27,130 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi8@gmail.com...
-2026-06-09 00:27:28,370 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi8@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:27:31,217 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi8@gmail.com (Optimized)
-2026-06-09 00:27:31,253 [INFO] app.automation.play_runner: Account thanhchuapi8@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:27:32,112 [INFO] app.automation.play_runner: GPU select result for thanhchuapi8@gmail.com: ok
-2026-06-09 00:27:32,653 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi8@gmail.com (20s timeout)...
-2026-06-09 00:27:53,165 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi8@gmail.com. Marking as quota reached.
-2026-06-09 00:27:53,174 [INFO] app.automation.play_runner: Account thanhchuapi8@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 00:27:53,174 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi8@gmail.com: Connection timeout for thanhchuapi8@gmail.com
-2026-06-09 00:27:53,377 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 00:27:53,929 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi8@gmail.com, trying next available account: Connection timeout for thanhchuapi8@gmail.com
-2026-06-09 00:27:53,941 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi9@gmail.com...
-2026-06-09 00:27:55,254 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi9@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:27:58,628 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi9@gmail.com (Optimized)
-2026-06-09 00:27:58,642 [INFO] app.automation.play_runner: Account thanhchuapi9@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:27:59,510 [INFO] app.automation.play_runner: GPU select result for thanhchuapi9@gmail.com: ok
-2026-06-09 00:28:00,053 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi9@gmail.com (20s timeout)...
-2026-06-09 00:28:20,507 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi9@gmail.com. Marking as quota reached.
-2026-06-09 00:28:20,516 [INFO] app.automation.play_runner: Account thanhchuapi9@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 00:28:20,517 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi9@gmail.com: Connection timeout for thanhchuapi9@gmail.com
-2026-06-09 00:28:20,709 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 00:28:21,196 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi9@gmail.com, trying next available account: Connection timeout for thanhchuapi9@gmail.com
-2026-06-09 00:28:21,200 [INFO] app.routes.ws: No offline accounts available for rotation.
-2026-06-09 00:29:35,078 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi1@gmail.com...
-2026-06-09 00:29:36,087 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi1@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:29:39,564 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi1@gmail.com (Optimized)
-2026-06-09 00:29:39,580 [INFO] app.automation.play_runner: Account thanhchuapi1@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:29:40,393 [INFO] app.automation.play_runner: GPU select result for thanhchuapi1@gmail.com: ok
-2026-06-09 00:29:40,936 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi1@gmail.com (20s timeout)...
-2026-06-09 00:30:01,497 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi1@gmail.com. Marking as quota reached.
-2026-06-09 00:30:01,508 [INFO] app.automation.play_runner: Account thanhchuapi1@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 00:30:01,508 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi1@gmail.com: Connection timeout for thanhchuapi1@gmail.com
-2026-06-09 00:30:01,648 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 00:30:02,283 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi1@gmail.com, trying next available account: Connection timeout for thanhchuapi1@gmail.com
-2026-06-09 00:30:02,300 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi2@gmail.com...
-2026-06-09 00:30:04,052 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi2@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:30:07,923 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi2@gmail.com (Optimized)
-2026-06-09 00:30:07,937 [INFO] app.automation.play_runner: Account thanhchuapi2@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:30:08,807 [INFO] app.automation.play_runner: GPU select result for thanhchuapi2@gmail.com: ok
-2026-06-09 00:30:09,360 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi2@gmail.com (20s timeout)...
-2026-06-09 00:30:29,951 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi2@gmail.com. Marking as quota reached.
-2026-06-09 00:30:29,961 [INFO] app.automation.play_runner: Account thanhchuapi2@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 00:30:29,962 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi2@gmail.com: Connection timeout for thanhchuapi2@gmail.com
-2026-06-09 00:30:30,088 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 00:30:30,577 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi2@gmail.com, trying next available account: Connection timeout for thanhchuapi2@gmail.com
-2026-06-09 00:30:30,586 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi3@gmail.com...
-2026-06-09 00:30:32,247 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi3@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:30:35,671 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi3@gmail.com (Optimized)
-2026-06-09 00:30:35,699 [INFO] app.automation.play_runner: Account thanhchuapi3@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:30:36,805 [INFO] app.automation.play_runner: GPU select result for thanhchuapi3@gmail.com: ok
-2026-06-09 00:30:37,365 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi3@gmail.com (20s timeout)...
-2026-06-09 00:30:57,915 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi3@gmail.com. Marking as quota reached.
-2026-06-09 00:30:57,927 [INFO] app.automation.play_runner: Account thanhchuapi3@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 00:30:57,927 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi3@gmail.com: Connection timeout for thanhchuapi3@gmail.com
-2026-06-09 00:30:58,064 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 00:30:58,628 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi3@gmail.com, trying next available account: Connection timeout for thanhchuapi3@gmail.com
-2026-06-09 00:30:58,644 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi4@gmail.com...
-2026-06-09 00:31:00,016 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi4@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:31:03,442 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi4@gmail.com (Optimized)
-2026-06-09 00:31:03,462 [INFO] app.automation.play_runner: Account thanhchuapi4@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:31:04,286 [INFO] app.automation.play_runner: GPU select result for thanhchuapi4@gmail.com: ok
-2026-06-09 00:31:04,832 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi4@gmail.com (20s timeout)...
-2026-06-09 00:31:25,304 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi4@gmail.com. Marking as quota reached.
-2026-06-09 00:31:25,315 [INFO] app.automation.play_runner: Account thanhchuapi4@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 00:31:25,315 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi4@gmail.com: Connection timeout for thanhchuapi4@gmail.com
-2026-06-09 00:31:25,440 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 00:31:25,921 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi4@gmail.com, trying next available account: Connection timeout for thanhchuapi4@gmail.com
-2026-06-09 00:31:25,932 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi5@gmail.com...
-2026-06-09 00:31:27,273 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi5@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:31:31,075 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi5@gmail.com (Optimized)
-2026-06-09 00:31:31,085 [INFO] app.automation.play_runner: Account thanhchuapi5@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:31:31,889 [INFO] app.automation.play_runner: GPU select result for thanhchuapi5@gmail.com: ok
-2026-06-09 00:31:32,440 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi5@gmail.com (20s timeout)...
-2026-06-09 00:31:53,123 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi5@gmail.com. Marking as quota reached.
-2026-06-09 00:31:53,131 [INFO] app.automation.play_runner: Account thanhchuapi5@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 00:31:53,132 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi5@gmail.com: Connection timeout for thanhchuapi5@gmail.com
-2026-06-09 00:31:53,267 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 00:31:53,730 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi5@gmail.com, trying next available account: Connection timeout for thanhchuapi5@gmail.com
-2026-06-09 00:31:53,739 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi6@gmail.com...
-2026-06-09 00:31:55,414 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi6@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:31:58,848 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi6@gmail.com (Optimized)
-2026-06-09 00:31:58,876 [INFO] app.automation.play_runner: Account thanhchuapi6@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:31:59,716 [INFO] app.automation.play_runner: GPU select result for thanhchuapi6@gmail.com: ok
-2026-06-09 00:32:00,259 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi6@gmail.com (20s timeout)...
-2026-06-09 00:32:20,817 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi6@gmail.com. Marking as quota reached.
-2026-06-09 00:32:20,826 [INFO] app.automation.play_runner: Account thanhchuapi6@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 00:32:20,827 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi6@gmail.com: Connection timeout for thanhchuapi6@gmail.com
-2026-06-09 00:32:20,973 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 00:32:21,480 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi6@gmail.com, trying next available account: Connection timeout for thanhchuapi6@gmail.com
-2026-06-09 00:32:21,492 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi7@gmail.com...
-2026-06-09 00:32:22,851 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi7@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:32:26,289 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi7@gmail.com (Optimized)
-2026-06-09 00:32:26,305 [INFO] app.automation.play_runner: Account thanhchuapi7@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:32:27,135 [INFO] app.automation.play_runner: GPU select result for thanhchuapi7@gmail.com: ok
-2026-06-09 00:32:27,683 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi7@gmail.com (20s timeout)...
-2026-06-09 00:32:48,262 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi7@gmail.com. Marking as quota reached.
-2026-06-09 00:32:48,269 [INFO] app.automation.play_runner: Account thanhchuapi7@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 00:32:48,270 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi7@gmail.com: Connection timeout for thanhchuapi7@gmail.com
-2026-06-09 00:32:48,395 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 00:32:48,926 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi7@gmail.com, trying next available account: Connection timeout for thanhchuapi7@gmail.com
-2026-06-09 00:32:48,934 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi8@gmail.com...
-2026-06-09 00:32:50,270 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi8@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:32:54,039 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi8@gmail.com (Optimized)
-2026-06-09 00:32:54,057 [INFO] app.automation.play_runner: Account thanhchuapi8@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:32:54,885 [INFO] app.automation.play_runner: GPU select result for thanhchuapi8@gmail.com: ok
-2026-06-09 00:32:55,445 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi8@gmail.com (20s timeout)...
-2026-06-09 00:33:15,960 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi8@gmail.com. Marking as quota reached.
-2026-06-09 00:33:15,969 [INFO] app.automation.play_runner: Account thanhchuapi8@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 00:33:15,969 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi8@gmail.com: Connection timeout for thanhchuapi8@gmail.com
-2026-06-09 00:33:16,094 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 00:33:16,556 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi8@gmail.com, trying next available account: Connection timeout for thanhchuapi8@gmail.com
-2026-06-09 00:33:16,570 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi9@gmail.com...
-2026-06-09 00:33:18,284 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi9@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 00:33:21,763 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi9@gmail.com (Optimized)
-2026-06-09 00:33:21,776 [INFO] app.automation.play_runner: Account thanhchuapi9@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 00:33:22,557 [INFO] app.automation.play_runner: GPU select result for thanhchuapi9@gmail.com: ok
-2026-06-09 00:33:23,108 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi9@gmail.com (20s timeout)...
+2026-06-09 00:40:08,750 [INFO] app.main: ☁️  Cloudflare Tunnel URL: https://notification-fabulous-weekends-messaging.trycloudflare.com
+2026-06-09 00:41:25,542 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi1@gmail.com...
+2026-06-09 00:41:27,006 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi1@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
+2026-06-09 00:41:30,499 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi1@gmail.com (Optimized)
+2026-06-09 00:41:30,518 [INFO] app.automation.play_runner: Account thanhchuapi1@gmail.com status: disconnected. Proceeding with GPU setup.
+2026-06-09 00:41:31,427 [INFO] app.automation.play_runner: GPU select result for thanhchuapi1@gmail.com: ok
+2026-06-09 00:41:31,959 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi1@gmail.com (20s timeout)...
+2026-06-09 00:41:52,684 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi1@gmail.com. Marking as quota reached.
+2026-06-09 00:41:52,693 [INFO] app.automation.play_runner: Account thanhchuapi1@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
+2026-06-09 00:41:52,694 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi1@gmail.com: Connection timeout for thanhchuapi1@gmail.com
+2026-06-09 00:41:52,891 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
+2026-06-09 00:41:53,660 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi1@gmail.com, trying next available account: Connection timeout for thanhchuapi1@gmail.com
+2026-06-09 00:41:53,687 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi2@gmail.com...
+2026-06-09 00:41:55,564 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi2@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
+2026-06-09 00:41:59,120 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi2@gmail.com (Optimized)
+2026-06-09 00:41:59,144 [INFO] app.automation.play_runner: Account thanhchuapi2@gmail.com status: disconnected. Proceeding with GPU setup.
+2026-06-09 00:42:00,186 [INFO] app.automation.play_runner: GPU select result for thanhchuapi2@gmail.com: ok
+2026-06-09 00:42:00,761 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi2@gmail.com (20s timeout)...
+2026-06-09 00:42:21,560 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi2@gmail.com. Marking as quota reached.
+2026-06-09 00:42:21,584 [INFO] app.automation.play_runner: Account thanhchuapi2@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
+2026-06-09 00:42:21,584 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi2@gmail.com: Connection timeout for thanhchuapi2@gmail.com
+2026-06-09 00:42:21,777 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
+2026-06-09 00:42:22,496 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi2@gmail.com, trying next available account: Connection timeout for thanhchuapi2@gmail.com
+2026-06-09 00:42:22,514 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi3@gmail.com...
+2026-06-09 00:42:24,134 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi3@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
+2026-06-09 00:42:27,635 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi3@gmail.com (Optimized)
+2026-06-09 00:42:27,655 [INFO] app.automation.play_runner: Account thanhchuapi3@gmail.com status: disconnected. Proceeding with GPU setup.
+2026-06-09 00:42:28,630 [INFO] app.automation.play_runner: GPU select result for thanhchuapi3@gmail.com: ok
+2026-06-09 00:42:29,178 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi3@gmail.com (20s timeout)...
+2026-06-09 00:42:49,303 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi3@gmail.com. Marking as quota reached.
+2026-06-09 00:42:49,320 [INFO] app.automation.play_runner: Account thanhchuapi3@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
+2026-06-09 00:42:49,321 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi3@gmail.com: Connection timeout for thanhchuapi3@gmail.com
+2026-06-09 00:42:49,503 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
+2026-06-09 00:42:50,025 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi3@gmail.com, trying next available account: Connection timeout for thanhchuapi3@gmail.com
+2026-06-09 00:42:50,043 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi4@gmail.com...
+2026-06-09 00:42:51,971 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi4@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
+2026-06-09 00:42:55,420 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi4@gmail.com (Optimized)
+2026-06-09 00:42:55,435 [INFO] app.automation.play_runner: Account thanhchuapi4@gmail.com status: disconnected. Proceeding with GPU setup.
+2026-06-09 00:42:56,342 [INFO] app.automation.play_runner: GPU select result for thanhchuapi4@gmail.com: ok
+2026-06-09 00:42:56,894 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi4@gmail.com (20s timeout)...
+2026-06-09 00:43:17,642 [WARNING] app.automation.play_runner: Connection timeout (20s) for thanhchuapi4@gmail.com. Marking as quota reached.
+2026-06-09 00:43:17,652 [INFO] app.automation.play_runner: Account thanhchuapi4@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
+2026-06-09 00:43:17,652 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi4@gmail.com: Connection timeout for thanhchuapi4@gmail.com
+2026-06-09 00:43:17,852 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
+2026-06-09 00:43:18,356 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi4@gmail.com, trying next available account: Connection timeout for thanhchuapi4@gmail.com
+2026-06-09 00:43:18,366 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi5@gmail.com...
+2026-06-09 00:43:19,774 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi5@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
+2026-06-09 00:43:23,304 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi5@gmail.com (Optimized)
+2026-06-09 00:43:23,316 [INFO] app.automation.play_runner: Account thanhchuapi5@gmail.com status: disconnected. Proceeding with GPU setup.
+2026-06-09 00:43:24,285 [INFO] app.automation.play_runner: GPU select result for thanhchuapi5@gmail.com: ok
+2026-06-09 00:43:24,835 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi5@gmail.com (20s timeout)...

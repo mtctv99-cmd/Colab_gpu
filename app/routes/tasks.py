@@ -1,6 +1,7 @@
 """API routes for TTS task management."""
 
 import asyncio
+import re
 import aiofiles
 import logging
 import os
@@ -20,6 +21,14 @@ from app.database import get_db
 from app.models import Task, Voice
 from app.config import DATA_DIR, RESULTS_DIR
 from app.routes.ws import manager, _pending_direct_events
+
+import unicodedata
+
+def _slugify(name: str) -> str:
+    """Convert voice name to safe folder name."""
+    n = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower()
+    n = re.sub(r"[^a-z0-9]+", "_", n).strip("_")
+    return n or "default"
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
@@ -276,7 +285,12 @@ async def complete_task(task_id: str, audio: UploadFile = File(...), db: AsyncSe
         raise HTTPException(status_code=400, detail="Task is not in a processable state.")
 
     # Save audio file asynchronously to avoid blocking FastAPI's event loop.
-    dest = RESULTS_DIR / f"{task_id}.wav"
+    # Save in voice-named folder under DATA_DIR for organized output
+    voice = await db.get(Voice, task.voice_id)
+    voice_slug = _slugify(voice.name) if voice else "default"
+    voice_dir = DATA_DIR / voice_slug / "output"
+    voice_dir.mkdir(parents=True, exist_ok=True)
+    dest = voice_dir / f"{task_id}.wav"
     async with aiofiles.open(dest, mode="wb") as f:
         await f.write(await audio.read())
 

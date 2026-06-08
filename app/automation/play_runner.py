@@ -477,10 +477,56 @@ async def _check_quota_or_errors(page: Page) -> str | None:
         return f"eval_error: {e}"
 
 
+
+async def _check_login_required(page) -> bool:
+    """Phát hiện trang yêu cầu login Google.
+    Trả True nếu cần login lại.
+    """
+    try:
+        url = page.url
+        if "accounts.google.com" in url or "ServiceLogin" in url or "signin" in url:
+            return True
+        result = await page.evaluate("""() => {
+            const text = (document.body && document.body.innerText || '').toLowerCase();
+            const indicators = ['sign in to your google account', 'enter your password', 'wrong password',
+                               'nhập mật khẩu', 'đăng nhập', 'verify it\'s you'];
+            for (const ind of indicators) {
+                if (text.includes(ind)) return true;
+            }
+            // Check for password input field
+            return !!document.querySelector('input[type="password"]');
+        }""")
+        return bool(result)
+    except Exception as e:
+        logger.warning("Could not check login status: %s", e)
+        return False
+
+
+async def _mark_account_needs_login(email: str) -> None:
+    """Đánh dấu account cần login lại (NEEDS_LOGIN status, không cooldown)."""
+    try:
+        async with async_session() as db:
+            await db.execute(
+                update(GoogleAccount)
+                .where(GoogleAccount.email == email)
+                .values(status="NEEDS_LOGIN", quota_reset_at=None)
+            )
+            await db.commit()
+        logger.warning("Account %s marked NEEDS_LOGIN. User must re-login via dashboard.", email)
+    except Exception as e:
+        logger.error("Failed to mark NEEDS_LOGIN for %s: %s", email, e)
+
+
 async def _select_gpu_and_connect(page: Page, email: str) -> None:
     """Chọn GPU T4 và kết nối. Tối ưu: kiểm tra nếu đã có T4 thì bỏ qua, timeout 20s."""
     logger.info("Starting GPU selection and connection for %s (Optimized)", email)
     
+    # ── Bước -1: Kiểm tra cần login không ──────────────────────────
+    if await _check_login_required(page):
+        logger.error("Account %s needs login. Stopping automation.", email)
+        await _mark_account_needs_login(email)
+        raise RuntimeError(f"Account {email} needs manual login")
+
     # ── Bước 0: Kiểm tra nếu đã có T4 ─────────────────────────────
     try:
         gpu_status = await page.evaluate("window.__colabUtils.checkGpuStatus()")
