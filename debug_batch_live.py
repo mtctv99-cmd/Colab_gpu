@@ -87,13 +87,13 @@ async def main():
 
         print("[3] POST batch 10 segment...")
         t0 = time.perf_counter()
-        r = await client.post(f"{URL}/api/tasks/batch", json={"voice_id": voice_id, "texts": TEXTS})
+        r = await client.post(f"{URL}/api/tts/batch", json={"voice_id": voice_id, "texts": TEXTS})
         elapsed_ms = (time.perf_counter() - t0) * 1000
         print(f"    HTTP {r.status_code} in {elapsed_ms:.2f} ms")
         print(f"    Response: {r.text[:1000]}")
         r.raise_for_status()
         tasks = r.json()["tasks"]
-        ids = [t["id"] for t in tasks]
+        ids = [t["task_id"] for t in tasks]
         print(f"[OK] Created {len(ids)} tasks")
 
         print("[4] Poll statuses 45s...")

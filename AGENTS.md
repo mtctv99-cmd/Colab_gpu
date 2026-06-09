@@ -66,7 +66,7 @@ python colab/worker.py --server-url <SERVER_URL> --email <EMAIL>
 
 - **Vietnamese mixed with English** in comments, strings, and error messages throughout (Vietnamese primary language).
 - **Playwright only runs on Windows** (browser cleanup uses PowerShell `Get-CimInstance`).
-- Two similar sync TTS endpoints: `POST /api/tts/text` (preferred) and `POST /api/tasks/direct` (older, less used).
+- Sync TTS: `POST /api/tts/text` (blocking, returns WAV). Batch: `POST /api/tts/batch` (async, returns task list). The duplicated `/api/tasks/direct` and `/api/tasks/batch` have been removed.
 - Voice audio files stored at `data/voices/<slug>/ref.wav`; transcript at `data/voices/<slug>/ref.txt`.
 - Cloudflare tunnel auto-starts when cloudflared is on PATH and `CLOUDFLARED_ENABLED=1` in `.env`.
 - Keep-alive JS injected into Colab page clicks "Connect" and dismisses "Run anyway" dialogs every 30s.

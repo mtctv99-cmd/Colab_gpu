@@ -17,6 +17,7 @@ data/pkg_debug/
 data/colab_automation.log
 data/*.png
 data/*.zip
+data/*/output/
 
 # SQLite
 data/db.sqlite3-shm

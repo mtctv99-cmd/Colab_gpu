@@ -76,8 +76,8 @@ async def main():
         print(f"[4] Using Voice ID: {voice_id}")
 
         print("[5] Posting Batch (Triggering Auto-rotation)...")
-        r = await client.post(f"{URL}/api/tasks/batch", json={"voice_id": voice_id, "texts": TEXTS})
-        task_ids = [t["id"] for t in r.json()["tasks"]]
+        r = await client.post(f"{URL}/api/tts/batch", json={"voice_id": voice_id, "texts": TEXTS})
+        task_ids = [t["task_id"] for t in r.json()["tasks"]]
         print(f"    Batch created: {len(task_ids)} tasks PENDING")
 
         print("[6] Monitoring Worker Automation & Processing (10 minutes)...")

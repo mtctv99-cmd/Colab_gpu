@@ -73,17 +73,17 @@ async def run():
                 "texts": [f"Benchmark text {i}: Kiem tra hieu suat API tao hang loat task toc do cao." for i in range(N)]
             }
             t0 = time.perf_counter()
-            r = await client.post(f"{url}/api/tasks/batch", json=payload)
+            r = await client.post(f"{url}/api/tts/batch", json=payload)
             results["batch_ms"] = round((time.perf_counter() - t0) * 1000, 2)
 
             if r.status_code == 200:
                 data = r.json()
                 created = len(data["tasks"])
                 results["tasks_created"] = created
-                print(f"[OK] POST /api/tasks/batch ({N} tasks) in {results['batch_ms']} ms")
+                print(f"[OK] POST /api/tts/batch ({N} tasks) in {results['batch_ms']} ms")
                 print(f"     => {created} tasks created, avg {results['batch_ms']/created:.2f} ms/task")
                 for t in data["tasks"][:3]:
-                    print(f"     id={t['id'][:8]}... status={t['status']}")
+                    print(f"     id={t['task_id'][:8]}... status={t['status']}")
             else:
                 print(f"[FAIL] Batch request: {r.status_code} {r.text}")
 
