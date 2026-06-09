@@ -586,7 +586,7 @@ async def _select_gpu_and_connect(page: Page, email: str) -> None:
     await page.wait_for_timeout(500)
     
     # ── Bước 3: Kết nối và Đợi (Timeout 20s) ───────────────────────
-    logger.info("Connecting runtime for %s (90s timeout)...", email)
+    logger.info("Connecting runtime for %s (150s timeout)...", email)
     await page.evaluate("""() => {
         const btn = document.querySelector('colab-connect-button')?.shadowRoot?.querySelector('#connect, colab-toolbar-button');
         btn?.click();
@@ -595,7 +595,7 @@ async def _select_gpu_and_connect(page: Page, email: str) -> None:
     start_time = asyncio.get_event_loop().time()
     connected = False
     
-    while asyncio.get_event_loop().time() - start_time < 90:  # T4 GPU can take 30-90s to allocate
+    while asyncio.get_event_loop().time() - start_time < 150:  # T4 GPU can take a long time
         # Kiểm tra quota trước
         quota_err = await _check_quota_or_errors(page)
         if quota_err:
@@ -721,6 +721,8 @@ async def start_colab_worker(email: str, server_url: str) -> None:
 
         # 1. Chọn GPU T4 & Connect trước khi điền tham số
         # 1. Điền form parameters TRƯỚC (đề phòng Run Anyway popup)
+        await _fill_colab_param(page, "GITHUB_USER", GITHUB_USER)
+        await _fill_colab_param(page, "GITHUB_REPO", GITHUB_REPO)
         await _fill_colab_param(page, "SERVER_URL", server_url)
         await _fill_colab_param(page, "EMAIL", email)
 
@@ -730,9 +732,18 @@ async def start_colab_worker(email: str, server_url: str) -> None:
         # 3. Dismiss Run anyway ngay sau khi Connect (có thể popup trong lúc chờ)
         dismissed = await _dismiss_colab_security_warning(page, email)
 
-        # 4. Gửi Ctrl+F9 để Run All cells
-        logger.info("Sending Run All (Ctrl+F9) for %s", email)
-        await page.keyboard.press("Control+F9")
+        # 4. Click tất cả nút Play bằng JavaScript (Chắc chắn hơn Ctrl+F9)
+        logger.info("Triggering Run All via JS Play buttons for %s", email)
+        await page.evaluate("""() => {
+            const playButtons = document.querySelectorAll('.run-button, colab-run-button');
+            playButtons.forEach(btn => {
+                if (btn.shadowRoot) {
+                    btn.shadowRoot.querySelector('#icon')?.click();
+                } else {
+                    btn.click();
+                }
+            });
+        }""")
 
         if dismissed:
             try:

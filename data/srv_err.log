@@ -1,47 +1,13 @@
-INFO:     Started server process [16004]
+INFO:     Started server process [16360]
 INFO:     Waiting for application startup.
-2026-06-09 01:04:06,482 [INFO] app.main: Cleaning up zombie browser processes...
-2026-06-09 01:04:07,414 [INFO] app.main: Initializing database...
-2026-06-09 01:04:07,432 [INFO] app.main: Database ready.
-2026-06-09 01:04:07,432 [INFO] app.main: Cleaning up orphan tasks...
-2026-06-09 01:04:07,450 [INFO] app.main: Orphan tasks cleaned up successfully.
-2026-06-09 01:04:07,451 [INFO] app.main: Scale-down background loop started.
+2026-06-09 08:49:25,778 [INFO] app.main: Cleaning up zombie browser processes...
+2026-06-09 08:49:26,552 [INFO] app.main: Initializing database...
+2026-06-09 08:49:26,572 [INFO] app.main: Database ready.
+2026-06-09 08:49:26,572 [INFO] app.main: Cleaning up orphan tasks...
+2026-06-09 08:49:26,592 [INFO] app.main: Orphan tasks cleaned up successfully.
+2026-06-09 08:49:26,593 [INFO] app.main: Scale-down background loop started.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
-INFO:     ('127.0.0.1', 52695) - "WebSocket /ws/dashboard" [accepted]
+INFO:     ('127.0.0.1', 49673) - "WebSocket /ws/dashboard" [accepted]
 INFO:     connection open
-2026-06-09 01:04:12,201 [INFO] app.main: \u2601\ufe0f  Cloudflare Tunnel URL: https://speakers-upc-distinction-mesh.trycloudflare.com
-2026-06-09 01:05:01,113 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi1@gmail.com...
-2026-06-09 01:05:03,210 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi1@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 01:05:06,828 [INFO] app.automation.play_runner: Filled parameter SERVER_URL via deep input fallback: input-set:Insert text here
-2026-06-09 01:05:06,931 [INFO] app.automation.play_runner: Filled parameter EMAIL via deep input fallback: input-set:Insert text here
-2026-06-09 01:05:06,933 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi1@gmail.com (Optimized)
-2026-06-09 01:05:06,972 [INFO] app.automation.play_runner: Account thanhchuapi1@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 01:05:07,861 [INFO] app.automation.play_runner: GPU select result for thanhchuapi1@gmail.com: ok
-2026-06-09 01:05:08,405 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi1@gmail.com (90s timeout)...
-2026-06-09 01:06:39,240 [WARNING] app.automation.play_runner: Connection timeout (90s) for thanhchuapi1@gmail.com. T4 GPU allocation failed or queue full.
-2026-06-09 01:06:39,255 [INFO] app.automation.play_runner: Account thanhchuapi1@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 01:06:39,255 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi1@gmail.com: Connection timeout for thanhchuapi1@gmail.com
-2026-06-09 01:06:39,411 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 01:06:40,004 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi1@gmail.com, trying next available account: Connection timeout for thanhchuapi1@gmail.com
-2026-06-09 01:06:40,023 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi2@gmail.com...
-2026-06-09 01:06:41,628 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi2@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 01:06:45,356 [INFO] app.automation.play_runner: Filled parameter SERVER_URL via deep input fallback: input-set:Insert text here
-2026-06-09 01:06:45,432 [INFO] app.automation.play_runner: Filled parameter EMAIL via deep input fallback: input-set:Insert text here
-2026-06-09 01:06:45,434 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi2@gmail.com (Optimized)
-2026-06-09 01:06:45,457 [INFO] app.automation.play_runner: Account thanhchuapi2@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 01:06:46,304 [INFO] app.automation.play_runner: GPU select result for thanhchuapi2@gmail.com: ok
-2026-06-09 01:06:46,854 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi2@gmail.com (90s timeout)...
-2026-06-09 01:08:17,312 [WARNING] app.automation.play_runner: Connection timeout (90s) for thanhchuapi2@gmail.com. T4 GPU allocation failed or queue full.
-2026-06-09 01:08:17,324 [INFO] app.automation.play_runner: Account thanhchuapi2@gmail.com marked OFFLINE for 16 hours due to quota/timeout.
-2026-06-09 01:08:17,325 [ERROR] app.automation.play_runner: Failed to start Colab worker for thanhchuapi2@gmail.com: Connection timeout for thanhchuapi2@gmail.com
-2026-06-09 01:08:17,464 [INFO] app.automation.play_runner: Saved error screenshot to D:\Colab\data\colab_debug_error.png
-2026-06-09 01:08:17,998 [ERROR] app.routes.ws: Failed to start worker for thanhchuapi2@gmail.com, trying next available account: Connection timeout for thanhchuapi2@gmail.com
-2026-06-09 01:08:18,015 [INFO] app.routes.ws: Attempting to auto-start worker for thanhchuapi3@gmail.com...
-2026-06-09 01:08:20,572 [INFO] app.automation.play_runner: Opening Colab for thanhchuapi3@gmail.com from GitHub: https://colab.research.google.com/github/mtctv99-cmd/Colab_gpu/blob/main/colab/worker.ipynb
-2026-06-09 01:08:24,157 [INFO] app.automation.play_runner: Filled parameter SERVER_URL via deep input fallback: input-set:Insert text here
-2026-06-09 01:08:24,289 [INFO] app.automation.play_runner: Filled parameter EMAIL via deep input fallback: input-set:Insert text here
-2026-06-09 01:08:24,290 [INFO] app.automation.play_runner: Starting GPU selection and connection for thanhchuapi3@gmail.com (Optimized)
-2026-06-09 01:08:24,333 [INFO] app.automation.play_runner: Account thanhchuapi3@gmail.com status: disconnected. Proceeding with GPU setup.
-2026-06-09 01:08:25,135 [INFO] app.automation.play_runner: GPU select result for thanhchuapi3@gmail.com: ok
-2026-06-09 01:08:25,687 [INFO] app.automation.play_runner: Connecting runtime for thanhchuapi3@gmail.com (90s timeout)...
+2026-06-09 08:49:30,420 [INFO] app.main: \u2601\ufe0f  Cloudflare Tunnel URL: https://prizes-strongly-programmes-consoles.trycloudflare.com
