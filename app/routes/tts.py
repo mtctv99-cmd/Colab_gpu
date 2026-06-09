@@ -81,6 +81,7 @@ async def tts_text(req: TextTTSRequest, user: User = Depends(require_user), db: 
         language=req.language,
         status="PENDING",
         batch_id=None,
+        user_id=user.id,
     )
     db.add(task)
     ok = await deduct_balance(user, chars, "dashboard", db, task_id=task.id)
@@ -176,6 +177,7 @@ async def tts_batch(req: BatchTTSRequest, user: User = Depends(require_user), db
             status="PENDING",
             batch_id=None,
             webhook_url=req.webhook_url,
+            user_id=user.id,
         )
         db.add(task)
         created_tasks.append(task)

@@ -14,10 +14,11 @@ import app.config as config
 from app.database import get_db
 from app.models import GoogleAccount
 from app.automation import play_runner
+from app.routes.auth import require_admin
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/accounts", tags=["accounts"])
+router = APIRouter(prefix="/api/accounts", tags=["accounts"], dependencies=[Depends(require_admin)])
 
 
 class AddAccountRequest(BaseModel):

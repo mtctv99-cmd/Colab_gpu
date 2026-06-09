@@ -20,6 +20,7 @@ from app.database import get_db
 from app.models import Task, Voice
 from app.config import DATA_DIR
 from app.routes.ws import manager, _pending_direct_events
+from app.routes.auth import require_admin
 
 import unicodedata
 
@@ -40,7 +41,7 @@ class CreateTaskRequest(BaseModel):
 
 # ── List tasks ────────────────────────────────────────────────
 @router.get("/")
-async def list_tasks(limit: int = 20, db: AsyncSession = Depends(get_db)):
+async def list_tasks(limit: int = 20, _admin=Depends(require_admin), db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(Task).order_by(desc(Task.created_at)).limit(limit)
     )
@@ -64,7 +65,7 @@ async def list_tasks(limit: int = 20, db: AsyncSession = Depends(get_db)):
 
 # ── Create a TTS task ─────────────────────────────────────────
 @router.post("/")
-async def create_task(req: CreateTaskRequest, db: AsyncSession = Depends(get_db)):
+async def create_task(req: CreateTaskRequest, _admin=Depends(require_admin), db: AsyncSession = Depends(get_db)):
     # Validate voice exists
     voice = await db.get(Voice, req.voice_id)
     if not voice:

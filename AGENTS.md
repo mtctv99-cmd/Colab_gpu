@@ -44,7 +44,10 @@ app/automation/play_runner.py — Playwright automation to control Colab browser
 |-------|--------|
 | `GoogleAccount` | email, profile_name, status (OFFLINE\|CONNECTING\|ACTIVE\|COOLDOWN\|NEEDS_LOGIN), quota_reset_at, started_at |
 | `Voice` | name, audio_path, transcript |
-| `Task` | text, voice_id, status (PENDING\|PROCESSING\|COMPLETED\|FAILED), batch_id, webhook_url, result_audio_path |
+| `Task` | text, voice_id, status (PENDING\|PROCESSING\|COMPLETED\|FAILED), batch_id, webhook_url, user_id, result_audio_path |
+| `User` | email, password_hash, role (user\|admin), balance (prepaid characters) |
+| `ApiKey` | user_id, key_prefix, key_hash, is_active |
+| `UsageRecord` | user_id, task_id, characters, cost, source |
 
 ## Sync TTS flow
 
@@ -85,3 +88,12 @@ POST /api/accounts/{id}/start    → opens Colab notebook, selects T4 GPU, queue
 
 - Accounts can be in NEEDS_LOGIN state when Google login session expires.
 - Quota COOLDOWN is 16h. Cell start failure gives 15min short backoff.
+
+## Auth & admin
+
+- **User signup** via `POST /api/auth/signup` (public). Login returns JWT token (7 days).
+- **API key auth** via `Authorization: Bearer <key>` (SHA-256 of 64-char hex key, shown once on creation).
+- **TTS endpoints** (`/api/tts/*`) require user auth + sufficient prepaid balance. 402 if insufficient.
+- **Admin routes** (`/api/accounts/*`, `POST /api/tasks/`, `POST/DELETE /api/voices/`) require `require_admin` dependency.
+- **Worker callbacks** (`POST /api/tasks/{id}/complete`, `GET /api/voices/{id}/audio`) are unauthenticated (rely on UUID secrecy).
+- **Admin top-up**: `POST /api/auth/admin/topup` `{email, amount}`.

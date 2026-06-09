@@ -77,6 +77,10 @@ class LoginRequest(BaseModel):
 class CreateApiKeyRequest(BaseModel):
     name: str = "Default"
 
+class AdminTopupRequest(BaseModel):
+    email: str
+    amount: int
+
 
 # ── Signup ─────────────────────────────────────────────────────
 @router.post("/signup")
@@ -145,6 +149,23 @@ async def delete_api_key(key_id: int, user: User = Depends(require_user), db: As
     ak.is_active = False
     await db.commit()
     return {"detail": "Deactivated"}
+
+
+# ── Admin: top-up balance ──────────────────────────────────────
+@router.post("/admin/topup")
+async def admin_topup(req: AdminTopupRequest, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    if admin.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    if req.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive")
+    result = await db.execute(select(User).where(User.email == req.email))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.balance += req.amount
+    await db.commit()
+    await db.refresh(user)
+    return {"email": user.email, "new_balance": user.balance, "added": req.amount}
 
 
 # ── Usage history ──────────────────────────────────────────────

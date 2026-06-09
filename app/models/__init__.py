@@ -47,6 +47,7 @@ class Task(Base):
     language = Column(String, nullable=True, default=None)
     batch_id = Column(String, nullable=True, default=None)
     webhook_url = Column(String, nullable=True, default=None)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     completed_at = Column(DateTime, nullable=True)
 

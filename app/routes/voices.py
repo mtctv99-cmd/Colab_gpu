@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models import Voice
 from app.config import VOICES_DIR
+from app.routes.auth import require_admin
 
 
 def _slugify(name: str) -> str:
@@ -74,6 +75,7 @@ async def add_voice(
     name: str = Form(...),
     transcript: str = Form(""),
     audio: UploadFile = File(...),
+    _admin=Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Add a new voice sample.
@@ -129,7 +131,7 @@ async def add_voice(
 
 # ── Delete voice ──────────────────────────────────────────────
 @router.delete("/{voice_id}")
-async def delete_voice(voice_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_voice(voice_id: int, _admin=Depends(require_admin), db: AsyncSession = Depends(get_db)):
     voice = await db.get(Voice, voice_id)
     if not voice:
         raise HTTPException(status_code=404, detail="Voice not found.")

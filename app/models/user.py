@@ -36,7 +36,7 @@ class UsageRecord(Base):
     __tablename__ = "usage_records"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     task_id = Column(String, ForeignKey("tasks.id"), nullable=True)
     characters = Column(Integer, nullable=False)
     cost = Column(Integer, nullable=False)
