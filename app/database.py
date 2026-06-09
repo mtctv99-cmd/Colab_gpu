@@ -15,6 +15,10 @@ class Base(DeclarativeBase):
 
 async def init_db():
     """Create all tables defined by ORM models."""
+    # Import all models so they register with Base.metadata
+    from app.models import GoogleAccount, Voice, Task
+    from app.models.user import User, ApiKey, UsageRecord
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

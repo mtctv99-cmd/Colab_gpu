@@ -15,7 +15,7 @@ from fastapi.exceptions import RequestValidationError
 
 from app.config import HOST, PORT, STATIC_DIR, CLOUDFLARED_ENABLED
 from app.database import init_db
-from app.routes import accounts, voices, tasks, ws, tts, health
+from app.routes import accounts, voices, tasks, ws, tts, health, auth
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -143,6 +143,7 @@ app.include_router(tasks.router)
 app.include_router(ws.router)
 app.include_router(tts.router)
 app.include_router(health.router)
+app.include_router(auth.router)
 
 
 

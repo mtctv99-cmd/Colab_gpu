@@ -10,7 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models import Voice, Task
+from app.models.user import User
 from app.routes.ws import manager, _pending_direct_events
+from app.routes.auth import require_user
+from app.services.auth import count_tts_characters, deduct_balance
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +54,12 @@ class BatchTTSRequest(BaseModel):
     summary="TTS một text (đồng bộ)",
     response_description="Trả về file audio WAV trực tiếp khi xử lý xong.",
 )
-async def tts_text(req: TextTTSRequest, db: AsyncSession = Depends(get_db)):
+async def tts_text(req: TextTTSRequest, user: User = Depends(require_user), db: AsyncSession = Depends(get_db)):
     """
     Chuyển đổi text thành giọng nói (tối đa 2000 từ).
     - Gọi đồng bộ: chờ đến khi có audio rồi trả về file WAV.
     - Lỗi 400: voice không tồn tại hoặc text vượt giới hạn từ.
+    - Lỗi 402: không đủ ký tự trong tài khoản.
     - Lỗi 503: không có worker rảnh.
     - Lỗi 504: worker xử lý quá thời gian (120 giây).
     """
@@ -66,16 +70,22 @@ async def tts_text(req: TextTTSRequest, db: AsyncSession = Depends(get_db)):
             detail={"error": "voice_not_found", "message": f"Voice ID {req.voice_id} không tồn tại."}
         )
 
+    chars = count_tts_characters(req.text)
+    if user.balance < chars:
+        raise HTTPException(status_code=402, detail=f"Insufficient balance. Need {chars}, have {user.balance}")
+
     task = Task(
         id=str(uuid.uuid4()),
         text=req.text,
         voice_id=req.voice_id,
         language=req.language,
         status="PENDING",
-            batch_id=None,
-            webhook_url=req.webhook_url,
+        batch_id=None,
     )
     db.add(task)
+    ok = await deduct_balance(user, chars, "dashboard", db, task_id=task.id)
+    if not ok:
+        raise HTTPException(status_code=402, detail="Insufficient balance")
     await db.commit()
     await db.refresh(task)
 
@@ -131,7 +141,7 @@ async def tts_text(req: TextTTSRequest, db: AsyncSession = Depends(get_db)):
     summary="TTS nhiều text (bất đồng bộ + webhook tuỳ chọn)",
     response_description="Mapping text → task_id cho toàn bộ batch.",
 )
-async def tts_batch(req: BatchTTSRequest, db: AsyncSession = Depends(get_db)):
+async def tts_batch(req: BatchTTSRequest, user: User = Depends(require_user), db: AsyncSession = Depends(get_db)):
     """
     Tạo task TTS cho nhiều text cùng lúc.
     - Trả về ngay mapping text → task_id với status PENDING.
@@ -151,6 +161,10 @@ async def tts_batch(req: BatchTTSRequest, db: AsyncSession = Depends(get_db)):
             detail={"error": "voice_not_found", "message": f"Voice ID {req.voice_id} không tồn tại."}
         )
 
+    total_chars = sum(count_tts_characters(t) for t in req.texts)
+    if user.balance < total_chars:
+        raise HTTPException(status_code=402, detail=f"Insufficient balance. Need {total_chars}, have {user.balance}")
+
     created_tasks = []
     batch_id = str(uuid.uuid4())
     for text in req.texts:
@@ -165,6 +179,12 @@ async def tts_batch(req: BatchTTSRequest, db: AsyncSession = Depends(get_db)):
         )
         db.add(task)
         created_tasks.append(task)
+
+    for task in created_tasks:
+        chars = count_tts_characters(task.text)
+        ok = await deduct_balance(user, chars, "api" if req.webhook_url else "dashboard", db, task_id=task.id)
+        if not ok:
+            raise HTTPException(status_code=402, detail="Insufficient balance")
 
     await db.commit()
     for task in created_tasks:

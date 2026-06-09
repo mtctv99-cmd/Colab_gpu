@@ -1,5 +1,4 @@
 """SQLAlchemy ORM models for the application."""
-
 import uuid
 from datetime import datetime, timezone
 
@@ -53,5 +52,3 @@ class Task(Base):
 
     voice = relationship("Voice", back_populates="tasks")
     worker = relationship("GoogleAccount", back_populates="tasks")
-
-
