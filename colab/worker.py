@@ -23,9 +23,9 @@ SAMPLE_RATE = 24000
 REF_CACHE_DIR = Path("/tmp/omnivoice_refs")
 MODEL_ID = "k2-fsa/OmniVoice"
 TASK_QUEUE_MAXSIZE = 16
-OMNIVOICE_NUM_STEP = int(os.getenv("OMNIVOICE_NUM_STEP", "12"))
-OMNIVOICE_GUIDANCE_SCALE = float(os.getenv("OMNIVOICE_GUIDANCE_SCALE", "2.0"))
-REF_AUDIO_MAX_SECONDS = float(os.getenv("REF_AUDIO_MAX_SECONDS", "7"))
+OMNIVOICE_NUM_STEP = int(os.getenv("OMNIVOICE_NUM_STEP", "8"))
+OMNIVOICE_GUIDANCE_SCALE = float(os.getenv("OMNIVOICE_GUIDANCE_SCALE", "1.5"))
+REF_AUDIO_MAX_SECONDS = float(os.getenv("REF_AUDIO_MAX_SECONDS", "5"))
 
 executor = ThreadPoolExecutor(max_workers=1)
 _voice_prompt_cache: dict[str, Any] = {}
