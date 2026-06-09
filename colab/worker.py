@@ -23,8 +23,12 @@ SAMPLE_RATE = 24000
 REF_CACHE_DIR = Path("/tmp/omnivoice_refs")
 MODEL_ID = "k2-fsa/OmniVoice"
 TASK_QUEUE_MAXSIZE = 16
+OMNIVOICE_NUM_STEP = int(os.getenv("OMNIVOICE_NUM_STEP", "16"))
+OMNIVOICE_GUIDANCE_SCALE = float(os.getenv("OMNIVOICE_GUIDANCE_SCALE", "2.0"))
+REF_AUDIO_MAX_SECONDS = float(os.getenv("REF_AUDIO_MAX_SECONDS", "10"))
 
 executor = ThreadPoolExecutor(max_workers=1)
+_voice_prompt_cache: dict[str, Any] = {}
 
 
 def configure_torch_runtime() -> None:
@@ -139,6 +143,14 @@ def build_generate_kwargs(
         elif "lang" in params:
             kwargs["lang"] = language
 
+    if "num_step" in params:
+        kwargs["num_step"] = OMNIVOICE_NUM_STEP
+    elif "num_steps" in params:
+        kwargs["num_steps"] = OMNIVOICE_NUM_STEP
+
+    if "guidance_scale" in params:
+        kwargs["guidance_scale"] = OMNIVOICE_GUIDANCE_SCALE
+
     if "use_cache" in params:
         kwargs["use_cache"] = True
 
@@ -157,6 +169,12 @@ def load_model(device: str) -> Any:
         dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
     )
     cache_generate_signature(model)
+    import inspect
+    try:
+        model._omnivoice_prompt_params = set(inspect.signature(model.create_voice_clone_prompt).parameters.keys())
+        print(f"[model] voice prompt params cached: {sorted(model._omnivoice_prompt_params)}", flush=True)
+    except Exception:
+        model._omnivoice_prompt_params = set()
     print(f"✅ Model loaded trong {time.time() - started_at:.1f}s", flush=True)
 
     print("🔥 Đang warmup model...", flush=True)
@@ -212,9 +230,102 @@ def _audio_to_wav_bytes(audio: Any) -> bytes:
     raise TypeError(f"Unsupported model.generate output type: {type(audio)!r}")
 
 
+def prepare_ref_audio(ref_audio: str) -> str:
+    """Trim long reference audio to 10s for faster voice prompt/ref encoding."""
+    if REF_AUDIO_MAX_SECONDS <= 0:
+        return ref_audio
+
+    src = Path(ref_audio)
+    if not src.exists():
+        return ref_audio
+
+    trim_key = hashlib.md5(
+        f"{src}:{src.stat().st_mtime_ns}:{REF_AUDIO_MAX_SECONDS}".encode(),
+        usedforsecurity=False,
+    ).hexdigest()
+    trimmed = REF_CACHE_DIR / f"{trim_key}.trim.wav"
+    if trimmed.exists() and trimmed.stat().st_size > 44:
+        return str(trimmed)
+
+    try:
+        audio, sr = sf.read(str(src), always_2d=False)
+        max_samples = int(sr * REF_AUDIO_MAX_SECONDS)
+        if len(audio) <= max_samples:
+            return ref_audio
+        sf.write(str(trimmed), audio[:max_samples], sr, format="WAV")
+        print(f"[ref] trimmed {src.name} to {REF_AUDIO_MAX_SECONDS:.1f}s", flush=True)
+        return str(trimmed)
+    except Exception as exc:
+        print(f"[ref] trim skipped: {exc}", flush=True)
+        return ref_audio
+
+
+def build_voice_prompt_kwargs(params: set[str], ref_audio: str, ref_text: str | None = None) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {}
+    if "ref_audio" in params:
+        kwargs["ref_audio"] = ref_audio
+    elif "reference_audio" in params:
+        kwargs["reference_audio"] = ref_audio
+    elif "reference_wav" in params:
+        kwargs["reference_wav"] = ref_audio
+    elif "prompt_audio" in params:
+        kwargs["prompt_audio"] = ref_audio
+    else:
+        kwargs["ref_audio"] = ref_audio
+
+    if ref_text:
+        if "ref_text" in params:
+            kwargs["ref_text"] = ref_text
+        elif "reference_text" in params:
+            kwargs["reference_text"] = ref_text
+        elif "prompt_text" in params:
+            kwargs["prompt_text"] = ref_text
+    return kwargs
+
+
+def get_voice_clone_prompt(model: Any, ref_audio: str, ref_text: str | None = None) -> Any | None:
+    """Cache OmniVoice ref-audio encoding when API exposes create_voice_clone_prompt."""
+    if not hasattr(model, "create_voice_clone_prompt"):
+        return None
+
+    params = getattr(model, "_omnivoice_prompt_params", set())
+    if not params:
+        return None
+
+    src = Path(ref_audio)
+    try:
+        mtime = src.stat().st_mtime_ns
+    except Exception:
+        mtime = 0
+    cache_key = hashlib.md5(f"{ref_audio}:{mtime}:{ref_text or ''}".encode(), usedforsecurity=False).hexdigest()
+    if cache_key in _voice_prompt_cache:
+        return _voice_prompt_cache[cache_key]
+
+    try:
+        kwargs = build_voice_prompt_kwargs(params, ref_audio, ref_text)
+        started = time.time()
+        with torch.inference_mode(), autocast_context():
+            prompt = model.create_voice_clone_prompt(**kwargs)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        _voice_prompt_cache[cache_key] = prompt
+        print(f"[voice-cache] prompt built in {(time.time() - started) * 1000:.0f}ms", flush=True)
+        return prompt
+    except Exception as exc:
+        print(f"[voice-cache] prompt build skipped: {exc}", flush=True)
+        return None
+
+
 def run_tts(model: Any, text: str, ref_audio: str, ref_text: str | None = None, language: str | None = None) -> bytes:
     params = getattr(model, "_omnivoice_generate_params", set())
+    ref_audio = prepare_ref_audio(ref_audio)
     kwargs = build_generate_kwargs(params, text, ref_audio, ref_text=ref_text, language=language)
+
+    voice_prompt = get_voice_clone_prompt(model, ref_audio, ref_text)
+    if voice_prompt is not None and "voice_clone_prompt" in params:
+        for key in ("ref_audio", "reference_audio", "reference_wav", "prompt_audio", "ref_text", "reference_text", "prompt_text"):
+            kwargs.pop(key, None)
+        kwargs["voice_clone_prompt"] = voice_prompt
 
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
@@ -400,6 +511,7 @@ def main() -> None:
         print("[error] EMAIL không được để trống.", flush=True)
         sys.exit(1)
 
+    print(f"[fast-mode] num_step={OMNIVOICE_NUM_STEP} guidance_scale={OMNIVOICE_GUIDANCE_SCALE} ref_max={REF_AUDIO_MAX_SECONDS}s", flush=True)
     model = load_model(detect_device())
     asyncio.run(worker_loop(model, server_url, email))
 
