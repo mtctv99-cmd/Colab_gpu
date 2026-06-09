@@ -35,6 +35,7 @@ for d in [DATA_DIR, PROFILES_DIR, VOICES_DIR, RESULTS_DIR]:
 HOST = "0.0.0.0"
 PORT = 8001
 SERVER_URL = f"http://localhost:{PORT}"  # Will be dynamically updated if Cloudflare Tunnel is used
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 
 # Database
 DATABASE_URL = f"sqlite+aiosqlite:///{DATA_DIR / 'db.sqlite3'}"

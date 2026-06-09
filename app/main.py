@@ -15,9 +15,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path as _Path
 
 
-from app.config import HOST, PORT, STATIC_DIR, CLOUDFLARED_ENABLED
+from app.config import HOST, PORT, STATIC_DIR, CLOUDFLARED_ENABLED, GOOGLE_CLIENT_ID
 from app.database import init_db
-from app.routes import accounts, voices, tasks, ws, tts, health, auth
+from app.routes import accounts, voices, tasks, ws, tts, health, auth, google_auth
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -161,7 +161,11 @@ app.include_router(ws.router)
 app.include_router(tts.router)
 app.include_router(health.router)
 app.include_router(auth.router)
+app.include_router(google_auth.router)
 
+@app.get("/api/config")
+async def get_config():
+    return {"google_client_id": GOOGLE_CLIENT_ID}
 
 
 # HTML page routes (extension-less fallback to .html)

@@ -44,7 +44,18 @@
       <label class="checkbox"><input type="checkbox" id="remember" checked /> Ghi nhớ đăng nhập</label>
       <button type="submit" class="btn" id="submitBtn"><span class="spinner"></span><span class="btn-text">Đăng nhập</span></button>
     </form>
-    <div class="link">Chưa có tài khoản? <a href="/signup">Đăng ký</a></div>
+    <div style="display:flex;align-items:center;gap:12px;margin:18px 0;color:var(--faint);font-size:.8rem">
+      <hr style="flex:1;border:none;border-top:1px solid var(--line)" /><span>HOẶC</span><hr style="flex:1;border:none;border-top:1px solid var(--line)" />
+    </div>
+    <div id="g_id_onload"
+         data-client_id="GOOGLE_CLIENT_ID"
+         data-context="signin"
+         data-ux_mode="popup"
+         data-callback="handleGoogleCredential"
+         data-auto_prompt="false">
+    </div>
+    <div class="g_id_signin" data-type="standard" data-shape="rectangular" data-theme="outline" data-text="signin_with" data-size="large" data-logo_alignment="left" style="width:100%;min-height:44px"></div>
+    <div class="link" style="margin-top:14px">Chưa có tài khoản? <a href="/signup">Đăng ký</a></div>
   </div>
 
   <script>
@@ -88,6 +99,58 @@
         btn.disabled = false; btn.classList.remove("loading");
       }
     });
+  </script>
+  <div class="toast" id="googleToast" style="position:fixed;bottom:30px;right:30px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 20px;font-size:.9rem;display:none;z-index:100"></div>
+
+  <script src="https://accounts.google.com/gsi/client" async></script>
+  <script>
+    // Fetch config and set Google Client ID
+    fetch("/api/config").then(r => r.json()).then(config => {
+      const el = document.getElementById("g_id_onload");
+      if (config.google_client_id) {
+        el.setAttribute("data-client_id", config.google_client_id);
+      } else {
+        el.style.display = "none";
+        document.querySelector(".g_id_signin")?.style.setProperty("display", "none");
+      }
+    }).catch(() => {});
+
+    function showToast(msg) {
+      const t = document.getElementById("googleToast");
+      t.textContent = msg; t.style.display = "block";
+      setTimeout(() => { t.style.display = "none"; }, 5000);
+    }
+
+    async function handleGoogleCredential(response) {
+      const btn = document.getElementById("submitBtn");
+      btn.disabled = true; btn.classList.add("loading");
+      try {
+        // Get client_id from the page
+        const el = document.getElementById("g_id_onload");
+        const clientId = el.getAttribute("data-client_id");
+
+        const r = await fetch("/api/auth/google", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ credential: response.credential, client_id: clientId }),
+        });
+        const data = await r.json();
+        if (!r.ok) {
+          showToast(data.message || data.detail || "Google đăng nhập thất bại");
+          btn.disabled = false; btn.classList.remove("loading");
+          return;
+        }
+        localStorage.setItem("token", data.token);
+        localStorage.setItem("user", JSON.stringify(data.user));
+        showToast(data.message || "Đăng nhập thành công!");
+        setTimeout(() => {
+          window.location.href = data.user.role === "admin" ? "/admin/" : "/dashboard";
+        }, 1500);
+      } catch (err) {
+        showToast("Lỗi kết nối: " + err.message);
+        btn.disabled = false; btn.classList.remove("loading");
+      }
+    }
   </script>
 </body>
 </html>
