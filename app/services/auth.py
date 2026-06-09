@@ -49,8 +49,8 @@ def hash_api_key(key: str) -> str:
 
 
 def count_tts_characters(text: str) -> int:
-    """Count billable characters for TTS."""
-    return len(text)
+    """Count billable characters for TTS (excludes whitespace)."""
+    return len(text.replace(" ", "").replace("\n", "").replace("\r", "").replace("\t", ""))
 
 
 async def deduct_balance(user: User, characters: int, source: str, db, task_id: str | None = None) -> bool:

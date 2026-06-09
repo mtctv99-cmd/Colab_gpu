@@ -40,6 +40,7 @@
       // Refresh data for the tab
       if (btn.dataset.tab === "dashboard") refreshDashboard();
       if (btn.dataset.tab === "accounts") refreshAccounts();
+      if (btn.dataset.tab === "users") refreshUsers();
       if (btn.dataset.tab === "voices") refreshVoices();
       if (btn.dataset.tab === "tts") refreshVoices(); // Need voices for dropdown
     });
@@ -477,6 +478,41 @@
       addLog("info", "Đã xóa giọng nói.");
       refreshVoices();
     } catch (_) {}
+  };
+
+  window.refreshUsers = async function () {
+    try {
+      const users = await api("/api/auth/admin/users");
+      const tbody = document.getElementById("userTableBody");
+      if (!tbody) return;
+      if (!users || users.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--faint)">Chưa có người dùng</td></tr>';
+        return;
+      }
+      tbody.innerHTML = users.map(u => `
+        <tr>
+          <td>${esc(u.email)}</td>
+          <td><span class="status-badge ${u.role}">${u.role}</span></td>
+          <td style="font-weight:600;color:var(--accent)">${u.balance.toLocaleString()}</td>
+          <td><span class="status-badge ${u.is_active ? 'completed' : 'failed'}">${u.is_active ? 'Yes' : 'No'}</span></td>
+          <td style="color:var(--faint);font-size:.85rem">${u.created_at ? new Date(u.created_at).toLocaleDateString() : ''}</td>
+          <td><button class="btn-icon" onclick="topupUser('${esc(u.email)}')" title="Nạp ký tự">💰</button></td>
+        </tr>
+      `).join("");
+    } catch (_) {}
+  };
+
+  window.topupUser = async function (email) {
+    const amount = prompt("Nhập số ký tự cần nạp cho " + email + ":", "10000");
+    if (!amount || parseInt(amount) <= 0) return;
+    try {
+      const r = await api("/api/auth/admin/topup", {
+        method: "POST",
+        body: JSON.stringify({ email, amount: parseInt(amount) }),
+      });
+      addLog("success", `Đã nạp ${amount} ký tự cho ${email}. Balance mới: ${r.new_balance}`);
+      refreshUsers();
+    } catch (e) { addLog("error", "Top-up thất bại: " + e.message); }
   };
 
   window.playAudio = function (taskId) {

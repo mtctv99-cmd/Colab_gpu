@@ -225,28 +225,6 @@ async def _fire_webhook_if_batch_complete(batch_id: str, webhook_url: str) -> No
         logger.warning("Webhook failed for batch %s -> %s: %s", batch_id, webhook_url, exc)
 
 
-# ── Debug endpoint to take screenshot of active Playwright pages ─────
-@router.get("/debug/screenshot")
-async def debug_screenshot():
-    from app.automation.play_runner import _active_pages
-
-    results = {}
-    for email, page in _active_pages.items():
-        try:
-            clean_email = email.replace("@", "_").replace(".", "_")
-            path = DATA_DIR / f"colab_debug_{clean_email}.png"
-            await page.screenshot(path=str(path))
-            results[email] = {
-                "screenshot_path": str(path),
-                "url": page.url,
-                "title": await page.title()
-            }
-        except Exception as e:
-            results[email] = {"error": str(e)}
-            
-    return {"active_pages": list(_active_pages.keys()), "results": results}
-
-
 # ── Internal helper ───────────────────────────────────────────
 async def _dispatch_task(task: Task, email: str, db: AsyncSession):
     """Send a PENDING task to an idle worker via WebSocket."""

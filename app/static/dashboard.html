@@ -63,6 +63,7 @@
       <div class="logo">Colab TTS</div>
       <nav>
         <a class="active" id="navDashboard">Dashboard</a>
+        <a id="navTts">Tạo TTS</a>
         <a id="navApiKeys">API Keys</a>
         <a id="navUsage">Lịch sử</a>
         <a id="navLogout">Đăng xuất</a>
@@ -84,6 +85,24 @@
         </div>
         <div class="card">
           <div class="stat">Email<span id="userEmail" style="font-size:1rem;color:var(--text)"></span></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="sectionTts" style="display:none">
+      <div class="card">
+        <h2>🎤 Tạo giọng nói</h2>
+        <label style="display:block;color:var(--muted);font-size:.85rem;margin-bottom:6px">Chọn giọng</label>
+        <select id="ttsVoiceSelect" style="width:100%;padding:10px 14px;background:#1A1A1F;border:1px solid var(--line);border-radius:10px;color:var(--text);font-size:.9rem;outline:none;margin-bottom:14px"></select>
+        <label style="display:block;color:var(--muted);font-size:.85rem;margin-bottom:6px">Nội dung</label>
+        <textarea id="ttsText" placeholder="Nhập nội dung cần chuyển giọng nói..." rows="4" style="width:100%;padding:12px;background:#1A1A1F;border:1px solid var(--line);border-radius:10px;color:var(--text);font-size:.9rem;outline:none;resize:vertical;margin-bottom:14px"></textarea>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <button class="btn btn-primary" id="ttsSubmitBtn">Tạo TTS</button>
+          <span style="color:var(--faint);font-size:.85rem" id="ttsCharCount"></span>
+          <span style="color:var(--faint);font-size:.85rem" id="ttsStatus"></span>
+        </div>
+        <div id="ttsResult" style="margin-top:16px;display:none">
+          <audio controls style="width:100%"></audio>
         </div>
       </div>
     </div>
@@ -205,6 +224,59 @@
       } catch (e) { showToast("Lỗi tải lịch sử: " + e.message); }
     }
 
+    async function loadVoices() {
+      try {
+        const voices = await api("/api/voices/");
+        const sel = document.getElementById("ttsVoiceSelect");
+        sel.innerHTML = voices.map(v => `<option value="${v.id}">${v.name}</option>`).join("");
+      } catch (e) { showToast("Lỗi tải voices: " + e.message); }
+    }
+
+    let ttsTimer = null;
+    document.getElementById("ttsText").addEventListener("input", function() {
+      clearTimeout(ttsTimer);
+      ttsTimer = setTimeout(() => {
+        const chars = this.value.replace(/\s/g, "").length;
+        document.getElementById("ttsCharCount").textContent = `${chars} ký tự (không tính khoảng trắng)`;
+      }, 300);
+    });
+
+    document.getElementById("ttsSubmitBtn").addEventListener("click", async function() {
+      const text = document.getElementById("ttsText").value.trim();
+      const voiceId = parseInt(document.getElementById("ttsVoiceSelect").value);
+      if (!text) { showToast("Vui lòng nhập nội dung"); return; }
+      if (!voiceId) { showToast("Vui lòng chọn giọng"); return; }
+      this.disabled = true;
+      this.textContent = "Đang xử lý...";
+      document.getElementById("ttsStatus").textContent = "Đang chờ worker...";
+      try {
+        const r = await fetch("/api/tts/text", {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${getToken()}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ text, voice_id: voiceId }),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          const msg = err.message || err.detail || `HTTP ${r.status}`;
+          if (r.status === 402) showToast("Không đủ ký tự!");
+          else showToast("Lỗi: " + msg);
+          document.getElementById("ttsStatus").textContent = "Thất bại: " + msg;
+          return;
+        }
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const audio = document.querySelector("#ttsResult audio");
+        audio.src = url;
+        document.getElementById("ttsResult").style.display = "block";
+        document.getElementById("ttsStatus").textContent = "Hoàn thành!";
+        loadDashboard();
+      } catch (e) { showToast("Lỗi: " + e.message); }
+      finally {
+        this.disabled = false;
+        this.textContent = "Tạo TTS";
+      }
+    });
+
     async function createKey() {
       const name = document.getElementById("newKeyName").value.trim() || "Default";
       try {
@@ -238,13 +310,14 @@
     document.getElementById("createKeyBtn").addEventListener("click", createKey);
 
     function showSection(id) {
-      ["Dashboard","ApiKeys","Usage"].forEach(s => {
+      ["Dashboard","Tts","ApiKeys","Usage"].forEach(s => {
         document.getElementById("section" + s).style.display = s === id ? "block" : "none";
         document.getElementById("nav" + s).className = s === id ? "active" : "";
       });
     }
 
     document.getElementById("navDashboard").addEventListener("click", () => { showSection("Dashboard"); loadDashboard(); });
+    document.getElementById("navTts").addEventListener("click", () => { showSection("Tts"); loadVoices(); });
     document.getElementById("navApiKeys").addEventListener("click", () => { showSection("ApiKeys"); loadApiKeys(); });
     document.getElementById("navUsage").addEventListener("click", () => { showSection("Usage"); loadUsage(); });
     document.getElementById("navLogout").addEventListener("click", () => { localStorage.clear(); window.location.href = "/"; });

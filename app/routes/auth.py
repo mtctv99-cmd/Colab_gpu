@@ -151,11 +151,43 @@ async def delete_api_key(key_id: int, user: User = Depends(require_user), db: As
     return {"detail": "Deactivated"}
 
 
+# ── Admin: list users ─────────────────────────────────────────
+@router.get("/admin/users")
+async def admin_list_users(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).order_by(User.created_at.desc()))
+    return [
+        {"id": u.id, "email": u.email, "role": u.role, "balance": u.balance, "is_active": u.is_active, "created_at": u.created_at.isoformat() if u.created_at else None}
+        for u in result.scalars().all()
+    ]
+
+
 # ── Admin: top-up balance ──────────────────────────────────────
 @router.post("/admin/topup")
 async def admin_topup(req: AdminTopupRequest, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    if admin.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin only")
+    if req.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive")
+    result = await db.execute(select(User).where(User.email == req.email))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.balance += req.amount
+    await db.commit()
+    await db.refresh(user)
+    return {"email": user.email, "new_balance": user.balance, "added": req.amount}
+
+
+# ── Webhook: auto top-up (payment callback) ────────────────────
+class WebhookTopupRequest(BaseModel):
+    email: str
+    amount: int
+    secret: str = ""
+
+@router.post("/webhook/topup")
+async def webhook_topup(req: WebhookTopupRequest, db: AsyncSession = Depends(get_db)):
+    import os
+    webhook_secret = os.getenv("WEBHOOK_SECRET", "")
+    if webhook_secret and req.secret != webhook_secret:
+        raise HTTPException(status_code=401, detail="Invalid secret")
     if req.amount <= 0:
         raise HTTPException(status_code=400, detail="Amount must be positive")
     result = await db.execute(select(User).where(User.email == req.email))

@@ -15,6 +15,8 @@ from app.routes.ws import manager, _pending_direct_events
 from app.routes.auth import require_user
 from app.services.auth import count_tts_characters, deduct_balance
 
+_tts_concurrent = 0  # sync TTS concurrent request counter
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/tts", tags=["tts"])
@@ -63,76 +65,74 @@ async def tts_text(req: TextTTSRequest, user: User = Depends(require_user), db: 
     - Lỗi 503: không có worker rảnh.
     - Lỗi 504: worker xử lý quá thời gian (120 giây).
     """
-    voice = await db.get(Voice, req.voice_id)
-    if not voice:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": "voice_not_found", "message": f"Voice ID {req.voice_id} không tồn tại."}
-        )
-
-    chars = count_tts_characters(req.text)
-    if user.balance < chars:
-        raise HTTPException(status_code=402, detail=f"Insufficient balance. Need {chars}, have {user.balance}")
-
-    task = Task(
-        id=str(uuid.uuid4()),
-        text=req.text,
-        voice_id=req.voice_id,
-        language=req.language,
-        status="PENDING",
-        batch_id=None,
-        user_id=user.id,
-    )
-    db.add(task)
-    ok = await deduct_balance(user, chars, "dashboard", db, task_id=task.id)
-    if not ok:
-        raise HTTPException(status_code=402, detail="Insufficient balance")
-    await db.commit()
-    await db.refresh(task)
-
-    # 2. Check for active workers
-    if not manager.get_idle_worker():
-        from app.routes.ws import _try_auto_rotate, _maybe_scale_up, _rotate_lock, _has_starting_or_active_account
-        # Only trigger rotation if no browser/worker is already starting/running
-        if not manager.active and not _rotate_lock.locked() and not await _has_starting_or_active_account():
-            asyncio.create_task(_try_auto_rotate())
-        elif manager.active:
-            asyncio.create_task(_maybe_scale_up())
-        
-        # Wait for worker (max 30s for direct mode, not 75s)
-        for _ in range(30):
-            await asyncio.sleep(1)
-            if manager.get_idle_worker():
-                break
-
-    idle_email = manager.get_idle_worker()
-    if not idle_email:
-        raise HTTPException(status_code=503, detail="No idle worker available.")
-
-    # 3. Register event and dispatch
-    event = asyncio.Event()
-    _pending_direct_events[task.id] = event
-    
-    from app.routes.tasks import _dispatch_task
-    await _dispatch_task(task, idle_email, db)
-    await manager.broadcast_status({"event": "task_created", "task_id": task.id})
-
-    # 4. Wait for result
+    global _tts_concurrent
+    if _tts_concurrent >= 10:
+        raise HTTPException(status_code=429, detail="Too many concurrent TTS requests. Try again later.")
+    _tts_concurrent += 1
     try:
-        await asyncio.wait_for(event.wait(), timeout=120.0)
-    except asyncio.TimeoutError:
-        _pending_direct_events.pop(task.id, None)
-        raise HTTPException(status_code=504, detail="Processing timeout.")
+        voice = await db.get(Voice, req.voice_id)
+        if not voice:
+            raise HTTPException(status_code=400, detail={"error": "voice_not_found", "message": f"Voice ID {req.voice_id} không tồn tại."})
 
-    await db.refresh(task)
-    if task.status == "COMPLETED":
-        import os
-        if task.result_audio_path and os.path.exists(task.result_audio_path):
-            from fastapi.responses import FileResponse
-            return FileResponse(task.result_audio_path, media_type="audio/wav")
-        raise HTTPException(status_code=500, detail="Audio file missing on server.")
-    else:
+        chars = count_tts_characters(req.text)
+        if user.balance < chars:
+            raise HTTPException(status_code=402, detail=f"Insufficient balance. Need {chars}, have {user.balance}")
+
+        task = Task(
+            id=str(uuid.uuid4()),
+            text=req.text,
+            voice_id=req.voice_id,
+            language=req.language,
+            status="PENDING",
+            batch_id=None,
+            user_id=user.id,
+        )
+        db.add(task)
+        ok = await deduct_balance(user, chars, "dashboard", db, task_id=task.id)
+        if not ok:
+            raise HTTPException(status_code=402, detail="Insufficient balance")
+        await db.commit()
+        await db.refresh(task)
+
+        # 2. Check for active workers
+        if not manager.get_idle_worker():
+            from app.routes.ws import _try_auto_rotate, _maybe_scale_up, _rotate_lock, _has_starting_or_active_account
+            if not manager.active and not _rotate_lock.locked() and not await _has_starting_or_active_account():
+                asyncio.create_task(_try_auto_rotate())
+            elif manager.active:
+                asyncio.create_task(_maybe_scale_up())
+            for _ in range(30):
+                await asyncio.sleep(1)
+                if manager.get_idle_worker():
+                    break
+
+        idle_email = manager.get_idle_worker()
+        if not idle_email:
+            raise HTTPException(status_code=503, detail="No idle worker available.")
+
+        # 3. Register event and dispatch
+        event = asyncio.Event()
+        _pending_direct_events[task.id] = event
+        from app.routes.tasks import _dispatch_task
+        await _dispatch_task(task, idle_email, db)
+        await manager.broadcast_status({"event": "task_created", "task_id": task.id})
+
+        # 4. Wait for result
+        try:
+            await asyncio.wait_for(event.wait(), timeout=120.0)
+        except asyncio.TimeoutError:
+            _pending_direct_events.pop(task.id, None)
+            raise HTTPException(status_code=504, detail="Processing timeout.")
+
+        await db.refresh(task)
+        if task.status == "COMPLETED":
+            import os
+            if task.result_audio_path and os.path.exists(task.result_audio_path):
+                return FileResponse(task.result_audio_path, media_type="audio/wav")
+            raise HTTPException(status_code=500, detail="Audio file missing on server.")
         raise HTTPException(status_code=500, detail=f"Task failed: {task.error_message}")
+    finally:
+        _tts_concurrent -= 1
 
 
 # ── POST /api/tts/batch ───────────────────────────────────────
