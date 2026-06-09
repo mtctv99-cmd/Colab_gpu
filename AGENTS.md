@@ -26,7 +26,11 @@ colab/worker.py — runs on Colab GPU, loads OmniVoice, connects via WS
 app/automation/play_runner.py — Playwright automation to control Colab browser
 ```
 
-**Worker lifecycle:** auto-started by server. Max 3h45m lifetime → handover. Scale up when pending > 5× active workers. Scale down after 5min idle.
+**Worker lifecycle:** auto-started by server. Max 3h45m lifetime → handover. Scale up when pending > 5× active workers (or immediately when 0 workers + 1+ pending). Scale down after 5min idle.
+
+- `_maintenance_loop` runs every 30s: resets stale CONNECTING (>120s) → OFFLINE, proactive scale-up, scale-down idle.
+- On worker WS disconnect: PROCESSING tasks → FAILED, PENDING tasks trigger `_maybe_scale_up` recovery.
+- One worker = one TTS at a time (ThreadPoolExecutor max_workers=1). Parallel requires more workers (max 4).
 
 ## Database
 

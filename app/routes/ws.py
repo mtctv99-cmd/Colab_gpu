@@ -267,6 +267,11 @@ async def websocket_worker(ws: WebSocket):
                     await db.commit()
             except Exception as e:
                 logger.error("Disconnect cleanup error: %s", e)
+            # Trigger recovery if pending tasks remain
+            async with async_session() as db:
+                res = await db.execute(select(func.count()).select_from(Task).where(Task.status == "PENDING"))
+                if (res.scalar() or 0) > 0:
+                    asyncio.create_task(_maybe_scale_up())
             await manager.broadcast_status({"event": "worker_disconnected", "email": email})
 
 
@@ -380,7 +385,10 @@ async def _maybe_scale_up():
     async with async_session() as db:
         res = await db.execute(select(func.count()).select_from(Task).where(Task.status == "PENDING"))
         pending = res.scalar() or 0
-    if pending > SCALE_UP_PENDING_PER_WORKER * max(len(manager.active), 1):
+    active = len(manager.active)
+    if active == 0 and pending > 0:
+        asyncio.create_task(_try_auto_rotate())
+    elif pending > SCALE_UP_PENDING_PER_WORKER * active:
         asyncio.create_task(_try_auto_rotate())
 
 
@@ -394,20 +402,48 @@ async def _on_batch_request():
         asyncio.create_task(_try_auto_rotate())
 
 
-async def _scale_down_loop():
+async def _maintenance_loop():
+    """Background loop every 30s: reset stale CONNECTING, proactive scale-up, scale-down idle."""
+    STALE_CONNECTING_TIMEOUT = 120
     while True:
-        await asyncio.sleep(60)
-        if len(manager.active) <= KEEP_WARM_WORKERS:
-            continue
-        async with async_session() as db:
-            res = await db.execute(select(func.count()).select_from(Task).where(Task.status.in_(["PENDING", "PROCESSING"])))
-            if (res.scalar() or 0) > 0:
-                continue
+        await asyncio.sleep(30)
         now = datetime.now(timezone.utc)
-        for em, info in list(manager.worker_info.items()):
-            if info.get("status") == "IDLE" and not info.get("expiring"):
-                idle_since = info.get("idle_since") or info.get("connected_at") or now
-                if (now - idle_since).total_seconds() > SCALE_DOWN_IDLE_SECONDS:
-                    logger.info("Scale-down: stopping idle worker %s", em)
-                    asyncio.create_task(stop_expired_worker(em))
-                    break
+
+        # 1. Reset stale CONNECTING accounts (browser opened but WS never connected)
+        async with async_session() as db:
+            stale_cutoff = now - timedelta(seconds=STALE_CONNECTING_TIMEOUT)
+            result = await db.execute(
+                select(GoogleAccount).where(
+                    GoogleAccount.status == "CONNECTING",
+                    GoogleAccount.last_active < stale_cutoff,
+                )
+            )
+            for acc in result.scalars().all():
+                logger.warning("Resetting stale CONNECTING %s (stuck >%ss)", acc.email, STALE_CONNECTING_TIMEOUT)
+                acc.status = "OFFLINE"
+            await db.commit()
+
+        # 2. Proactive scale-up when pending pile up (not just on task creation)
+        if not _rotate_lock.locked() and len(manager.active) < MAX_CONCURRENT_WORKERS:
+            async with async_session() as db:
+                res = await db.execute(select(func.count()).select_from(Task).where(Task.status == "PENDING"))
+                pending = res.scalar() or 0
+            active = len(manager.active)
+            if active == 0 and pending > 0:
+                asyncio.create_task(_try_auto_rotate())
+            elif pending > SCALE_UP_PENDING_PER_WORKER * active:
+                asyncio.create_task(_try_auto_rotate())
+
+        # 3. Scale-down idle workers
+        if len(manager.active) > KEEP_WARM_WORKERS:
+            async with async_session() as db:
+                res = await db.execute(select(func.count()).select_from(Task).where(Task.status.in_(["PENDING", "PROCESSING"])))
+                has_work = (res.scalar() or 0) > 0
+            if not has_work:
+                for em, info in list(manager.worker_info.items()):
+                    if info.get("status") == "IDLE" and not info.get("expiring"):
+                        idle_since = info.get("idle_since") or info.get("connected_at") or now
+                        if (now - idle_since).total_seconds() > SCALE_DOWN_IDLE_SECONDS:
+                            logger.info("Scale-down: stopping idle worker %s", em)
+                            asyncio.create_task(stop_expired_worker(em))
+                            break
