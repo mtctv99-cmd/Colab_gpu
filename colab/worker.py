@@ -26,6 +26,7 @@ TASK_QUEUE_MAXSIZE = 16
 OMNIVOICE_NUM_STEP = int(os.getenv("OMNIVOICE_NUM_STEP", "8"))
 OMNIVOICE_GUIDANCE_SCALE = float(os.getenv("OMNIVOICE_GUIDANCE_SCALE", "1.5"))
 REF_AUDIO_MAX_SECONDS = float(os.getenv("REF_AUDIO_MAX_SECONDS", "5"))
+OMNIVOICE_SPEED = float(os.getenv("OMNIVOICE_SPEED", "1.2"))
 
 executor = ThreadPoolExecutor(max_workers=1)
 _voice_prompt_cache: dict[str, Any] = {}
@@ -150,6 +151,9 @@ def build_generate_kwargs(
 
     if "guidance_scale" in params:
         kwargs["guidance_scale"] = OMNIVOICE_GUIDANCE_SCALE
+
+    if "speed" in params:
+        kwargs["speed"] = OMNIVOICE_SPEED
 
     if "use_cache" in params:
         kwargs["use_cache"] = True
@@ -511,7 +515,7 @@ def main() -> None:
         print("[error] EMAIL không được để trống.", flush=True)
         sys.exit(1)
 
-    print(f"[fast-mode] num_step={OMNIVOICE_NUM_STEP} guidance_scale={OMNIVOICE_GUIDANCE_SCALE} ref_max={REF_AUDIO_MAX_SECONDS}s", flush=True)
+    print(f"[fast-mode] num_step={OMNIVOICE_NUM_STEP} guidance_scale={OMNIVOICE_GUIDANCE_SCALE} ref_max={REF_AUDIO_MAX_SECONDS}s speed={OMNIVOICE_SPEED}", flush=True)
     model = load_model(detect_device())
     asyncio.run(worker_loop(model, server_url, email))
 
