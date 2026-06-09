@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Colab Worker TTS — Admin Console</title>
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="icon" href="/favicon.ico" />
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <span class="brand-mark">CT</span>
+      <div>
+        <span class="brand-text">Colab TTS</span>
+        <span class="brand-subtitle">Admin Console</span>
+      </div>
+    </div>
+    <nav class="sidebar-nav">
+      <button class="nav-btn active" data-tab="dashboard"><span class="nav-index">01</span><span>Dashboard</span></button>
+      <button class="nav-btn" data-tab="accounts"><span class="nav-index">02</span><span>Tài khoản</span></button>
+      <button class="nav-btn" data-tab="voices"><span class="nav-index">03</span><span>Giọng nói</span></button>
+      <button class="nav-btn" data-tab="tts"><span class="nav-index">04</span><span>Tạo TTS</span></button>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="connection-status" id="wsStatus">
+        <span class="status-dot disconnected"></span>
+        <span>Disconnected</span>
+      </div>
+      <button id="adminLogout" class="nav-btn" style="margin-top:12px;width:100%"><span class="nav-index">←</span><span>Đăng xuất</span></button>
+    </div>
+  </aside>
+
+  <main class="main-content">
+    <section class="tab-content active" id="tab-dashboard">
+      <div class="page-header">
+        <div>
+          <p class="eyebrow">Runtime Monitor</p>
+          <h1 class="page-title">Giám sát tổng quan</h1>
+        </div>
+        <p class="page-note">Theo dõi worker, quota, queue và trạng thái WebSocket trong một màn hình.</p>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card"><div class="stat-label">Worker hoạt động</div><div class="stat-value" id="statActiveWorkers">0</div></div>
+        <div class="stat-card"><div class="stat-label">Task hoàn thành</div><div class="stat-value" id="statCompleted">0</div></div>
+        <div class="stat-card"><div class="stat-label">Đang chờ xử lý</div><div class="stat-value" id="statPending">0</div></div>
+        <div class="stat-card danger"><div class="stat-label">Thất bại</div><div class="stat-value stat-error" id="statFailed">0</div></div>
+      </div>
+
+      <div class="card table-card">
+        <h2 class="card-title">Worker gần đây</h2>
+        <div class="table-wrap">
+          <table><thead><tr><th>Worker</th><th>GPU</th><th>Status</th><th>Uptime</th><th>Hành động</th></tr></thead>
+          <tbody id="workerTableBody"><tr><td colspan="5" style="text-align:center;color:var(--faint)">Chờ dữ liệu...</td></tr></tbody></table>
+        </div>
+      </div>
+
+      <div class="card table-card">
+        <h2 class="card-title">Task Queue</h2>
+        <div class="table-wrap">
+          <table><thead><tr><th>ID</th><th>Text</th><th>Status</th><th>Thời gian</th></tr></thead>
+          <tbody id="taskTableBody"><tr><td colspan="4" style="text-align:center;color:var(--faint)">Chờ dữ liệu...</td></tr></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-content" id="tab-accounts">
+      <div class="page-header"><div><p class="eyebrow">Account Manager</p><h1 class="page-title">Tài khoản Google</h1></div><p class="page-note">Quản lý tài khoản Colab và vòng đời worker.</p></div>
+      <div style="display:flex;gap:12px;margin-bottom:20px">
+        <input type="email" id="newAccountEmail" placeholder="Email Google" style="flex:1;padding:10px 14px;background:var(--panel-2,#1A1A1F);border:1px solid var(--line);border-radius:12px;color:var(--text);font-size:.9rem;outline:none" />
+        <button class="admin-btn" onclick="addAccount()">+ Thêm tài khoản</button>
+      </div>
+      <div class="card table-card">
+        <div class="table-wrap">
+          <table><thead><tr><th>Email</th><th>Status</th><th>Quota Reset</th><th>Hành động</th></tr></thead>
+          <tbody id="accountTableBody"><tr><td colspan="4" style="text-align:center;color:var(--faint)">Chờ dữ liệu...</td></tr></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-content" id="tab-voices">
+      <div class="page-header"><div><p class="eyebrow">Voice Library</p><h1 class="page-title">Giọng nói</h1></div><p class="page-note">Quản lý các mẫu giọng nói tham chiếu.</p></div>
+      <div class="card table-card">
+        <div class="table-wrap">
+          <table><thead><tr><th>ID</th><th>Tên</th><th>Transcript</th><th>File</th><th></th></tr></thead>
+          <tbody id="voiceTableBody"><tr><td colspan="5" style="text-align:center;color:var(--faint)">Chờ dữ liệu...</td></tr></tbody></table>
+        </div>
+      </div>
+      <div style="display:flex;gap:12px;margin-top:16px">
+        <input type="text" id="newVoiceName" placeholder="Tên giọng nói" style="flex:1;padding:10px 14px;background:var(--panel-2,#1A1A1F);border:1px solid var(--line);border-radius:12px;color:var(--text);font-size:.9rem;outline:none" />
+        <textarea id="newVoiceTranscript" placeholder="Transcript (tuỳ chọn)" rows="1" style="flex:2;padding:10px 14px;background:var(--panel-2,#1A1A1F);border:1px solid var(--line);border-radius:12px;color:var(--text);font-size:.9rem;outline:none;resize:vertical"></textarea>
+        <input type="file" id="newVoiceFile" accept=".wav,.mp3,.flac,.ogg" style="flex:1;color:var(--text);font-size:.9rem" />
+        <button class="admin-btn" onclick="addVoice()">Upload</button>
+      </div>
+    </section>
+
+    <section class="tab-content" id="tab-tts">
+      <div class="page-header"><div><p class="eyebrow">Text-to-Speech</p><h1 class="page-title">Tạo giọng nói</h1></div><p class="page-note">Nhập nội dung và chọn giọng đọc.</p></div>
+      <div class="card" style="padding:24px">
+        <select id="ttsVoiceSelect" style="width:100%;padding:10px 14px;background:var(--panel-2,#1A1A1F);border:1px solid var(--line);border-radius:12px;color:var(--text);font-size:.9rem;outline:none;margin-bottom:14px"></select>
+        <textarea id="ttsText" placeholder="Nhập nội dung cần chuyển giọng nói..." rows="5" style="width:100%;padding:12px;background:var(--panel-2,#1A1A1F);border:1px solid var(--line);border-radius:12px;color:var(--text);font-size:.9rem;outline:none;resize:vertical;margin-bottom:14px"></textarea>
+        <div style="display:flex;gap:10px;align-items:center">
+          <button class="admin-btn" onclick="submitTTS()">Tạo TTS</button>
+          <span id="ttsStatus" style="color:var(--faint);font-size:.85rem"></span>
+        </div>
+        <div id="ttsResult" style="margin-top:16px;display:none">
+          <audio controls style="width:100%"></audio>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

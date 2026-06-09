@@ -147,7 +147,19 @@ app.include_router(auth.router)
 
 
 
-# Serve static files (dashboard)
+# HTML page routes (extension-less fallback to .html)
+from pathlib import Path as _Path
+from fastapi.responses import FileResponse
+
+_HTML_DIR = STATIC_DIR
+_PAGE_FILES = {"/login": "login.html", "/signup": "signup.html", "/dashboard": "dashboard.html"}
+
+for _route, _file in _PAGE_FILES.items():
+    _path_obj = _HTML_DIR / _file
+    if _path_obj.exists():
+        app.add_api_route(_route, lambda f=_path_obj: FileResponse(str(f)), methods=["GET"], include_in_schema=False)
+
+# Serve static files (admin dashboard at /admin/, landing at /)
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 
 

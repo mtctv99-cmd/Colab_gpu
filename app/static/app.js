@@ -14,6 +14,16 @@
   let refreshTimeout = null;
   let lastCreatedTaskId = null;
 
+  // ── Auth check ─────────────────────────────────────
+  (function checkAuth() {
+    const token = localStorage.getItem("token");
+    const user = (function() { try { return JSON.parse(localStorage.getItem("user")); } catch { return null; } })();
+    if (!token || !user || user.role !== "admin") {
+      window.location.href = "/login";
+      return;
+    }
+  })();
+
   // ── DOM refs ───────────────────────────────────────
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => document.querySelectorAll(sel);
@@ -119,13 +129,23 @@
   }
 
   // ── API helpers ────────────────────────────────────
+  function authHeaders() {
+    const token = localStorage.getItem("token");
+    return token ? { "Authorization": `Bearer ${token}` } : {};
+  }
+
   async function api(path, opts = {}) {
     const url = API + path;
     try {
       const resp = await fetch(url, {
-        headers: { "Content-Type": "application/json", ...opts.headers },
+        headers: { "Content-Type": "application/json", ...authHeaders(), ...opts.headers },
         ...opts,
       });
+      if (resp.status === 401) {
+        localStorage.clear();
+        window.location.href = "/login";
+        throw new Error("Session expired");
+      }
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
         throw new Error(err.detail || `HTTP ${resp.status}`);
@@ -526,15 +546,24 @@
   async function stopWorker(email) {
     if (!confirm("Dừng worker " + email + "?")) return;
     try {
-      const accs = await (await fetch("/api/accounts/")).json();
+      const accs = await api("/api/accounts/");
       const acc = accs.find(a => a.email === email);
       if (!acc) { alert("Không tìm thấy account"); return; }
-      await fetch("/api/accounts/" + acc.id + "/stop", { method: "POST" });
+      await fetch("/api/accounts/" + acc.id + "/stop", { method: "POST", headers: authHeaders() });
       addLog("info", "Đã dừng worker: " + email);
       refreshDashboard();
       refreshAccounts();
     } catch (e) { alert("Lỗi: " + e.message); }
   }
   window.stopWorker = stopWorker;
+
+  // ── Logout ────────────────────────────────────────
+  const logoutBtn = document.getElementById("adminLogout");
+  if (logoutBtn) {
+    logoutBtn.addEventListener("click", () => {
+      localStorage.clear();
+      window.location.href = "/";
+    });
+  }
 
 })();
