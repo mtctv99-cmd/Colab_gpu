@@ -19,11 +19,21 @@ async def init_db():
     from app.models import GoogleAccount, Voice, Task
     from app.models.user import User, ApiKey, UsageRecord
 
+    import sqlalchemy as sa
+
+    # Recreate tables with stale schema (api_keys was created by old model)
+    for table in ["api_keys"]:
+        try:
+            async with async_session() as session:
+                await session.execute(sa.text(f"DROP TABLE IF EXISTS {table}"))
+                await session.commit()
+        except Exception:
+            pass
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
     # Run manual migrations for SQLite (idempotent)
-    import sqlalchemy as sa
     _MIGRATIONS = [
         "ALTER TABLE tasks ADD COLUMN language VARCHAR",
         "ALTER TABLE google_accounts ADD COLUMN started_at DATETIME",
