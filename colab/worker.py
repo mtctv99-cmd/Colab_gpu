@@ -25,7 +25,10 @@ MODEL_ID = "k2-fsa/OmniVoice"
 TASK_QUEUE_MAXSIZE = 16
 OMNIVOICE_NUM_STEP = int(os.getenv("OMNIVOICE_NUM_STEP", "8"))
 OMNIVOICE_GUIDANCE_SCALE = float(os.getenv("OMNIVOICE_GUIDANCE_SCALE", "1.5"))
-REF_AUDIO_MAX_SECONDS = float(os.getenv("REF_AUDIO_MAX_SECONDS", "5"))
+_REF_MAX_RAW = float(os.getenv("REF_AUDIO_MAX_SECONDS", "5"))
+REF_AUDIO_MAX_SECONDS = max(1.0, min(30.0, _REF_MAX_RAW))
+if REF_AUDIO_MAX_SECONDS != _REF_MAX_RAW:
+    print(f"[ref] REF_AUDIO_MAX_SECONDS clamped to {REF_AUDIO_MAX_SECONDS:.1f}s (was {_REF_MAX_RAW})", flush=True)
 OMNIVOICE_SPEED = float(os.getenv("OMNIVOICE_SPEED", "1.0"))
 
 executor = ThreadPoolExecutor(max_workers=1)
@@ -235,7 +238,7 @@ def _audio_to_wav_bytes(audio: Any) -> bytes:
 
 
 def prepare_ref_audio(ref_audio: str) -> str:
-    """Trim long reference audio to 10s for faster voice prompt/ref encoding."""
+    """Trim long reference audio to REF_AUDIO_MAX_SECONDS for faster voice prompt/ref encoding."""
     if REF_AUDIO_MAX_SECONDS <= 0:
         return ref_audio
 
@@ -322,7 +325,6 @@ def get_voice_clone_prompt(model: Any, ref_audio: str, ref_text: str | None = No
 
 def run_tts(model: Any, text: str, ref_audio: str, ref_text: str | None = None, language: str | None = None) -> bytes:
     params = getattr(model, "_omnivoice_generate_params", set())
-    ref_audio = prepare_ref_audio(ref_audio)
     kwargs = build_generate_kwargs(params, text, ref_audio, ref_text=ref_text, language=language)
 
     voice_prompt = get_voice_clone_prompt(model, ref_audio, ref_text)
@@ -343,9 +345,10 @@ def run_tts(model: Any, text: str, ref_audio: str, ref_text: str | None = None, 
     return _audio_to_wav_bytes(output)
 
 
-async def download_ref_audio(client: httpx.AsyncClient, server_url: str, voice_url: str) -> str:
+async def download_ref_audio(client: httpx.AsyncClient, server_url: str, voice_url: str, max_seconds: float = REF_AUDIO_MAX_SECONDS) -> str:
     REF_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    url_hash = hashlib.md5(voice_url.encode(), usedforsecurity=False).hexdigest()
+    key_material = f"{voice_url}:{max_seconds}"
+    url_hash = hashlib.md5(key_material.encode(), usedforsecurity=False).hexdigest()
     local_path = REF_CACHE_DIR / f"{url_hash}.wav"
 
     if local_path.exists() and local_path.stat().st_size > 44:
@@ -355,7 +358,22 @@ async def download_ref_audio(client: httpx.AsyncClient, server_url: str, voice_u
     tmp_path = local_path.with_suffix(".tmp")
     resp = await client.get(full_url, timeout=30)
     resp.raise_for_status()
-    tmp_path.write_bytes(resp.content)
+
+    data = resp.content
+    if max_seconds > 0:
+        try:
+            import io
+            audio, sr = sf.read(io.BytesIO(data), always_2d=False)
+            max_samples = int(sr * max_seconds)
+            if len(audio) > max_samples:
+                buf = io.BytesIO()
+                sf.write(buf, audio[:max_samples], sr, format="WAV")
+                data = buf.getvalue()
+                print(f"[ref] trimmed download to {max_seconds:.1f}s", flush=True)
+        except Exception as exc:
+            print(f"[ref] download trim skipped: {exc}", flush=True)
+
+    tmp_path.write_bytes(data)
     tmp_path.replace(local_path)
     return str(local_path)
 
