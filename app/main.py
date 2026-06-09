@@ -1,4 +1,4 @@
-"""FastAPI application entry point for Colab Worker TTS."""
+"""FastAPI application entry point for Clone TTS."""
 
 import sys
 import asyncio
@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 
 
 from app.config import HOST, PORT, STATIC_DIR, CLOUDFLARED_ENABLED
@@ -112,7 +113,15 @@ async def lifespan(app: FastAPI):
 
 
 
-app = FastAPI(title="Colab Worker TTS", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Clone TTS", version="1.0.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):

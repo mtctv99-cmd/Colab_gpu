@@ -100,16 +100,55 @@ async def signup(req: SignupRequest, db: AsyncSession = Depends(get_db)):
     return {"token": token, "user": {"id": user.id, "email": user.email, "role": user.role, "balance": user.balance}}
 
 
+# ── Brute force protection ────────────────────────────────────
+_login_attempts: dict[str, list[float]] = {}
+_LOGIN_MAX_ATTEMPTS = 5
+_LOGIN_WINDOW_SECONDS = 300  # 5 minutes
+
+
+def _check_login_rate(email: str):
+    import time
+    now = time.time()
+    attempts = _login_attempts.get(email, [])
+    attempts = [t for t in attempts if now - t < _LOGIN_WINDOW_SECONDS]
+    if len(attempts) >= _LOGIN_MAX_ATTEMPTS:
+        raise HTTPException(status_code=429, detail="Too many login attempts. Try again in 5 minutes.")
+    attempts.append(now)
+    _login_attempts[email] = attempts
+
+
+def _clear_login_rate(email: str):
+    _login_attempts.pop(email, None)
+
+
 # ── Login ──────────────────────────────────────────────────────
 @router.post("/login")
 async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
+    _check_login_rate(req.email)
     result = await db.execute(select(User).where(User.email == req.email, User.is_active == True))
     user = result.scalar_one_or_none()
     if not user or not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
+    _clear_login_rate(req.email)
     token = create_access_token({"user_id": user.id, "role": user.role})
     return {"token": token, "user": {"id": user.id, "email": user.email, "role": user.role, "balance": user.balance}}
+
+
+# ── Change password ───────────────────────────────────────────
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+@router.post("/change-password")
+async def change_password(req: ChangePasswordRequest, user: User = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    if not verify_password(req.current_password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+    if len(req.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    user.password_hash = hash_password(req.new_password)
+    await db.commit()
+    return {"detail": "Password updated"}
 
 
 # ── Profile ────────────────────────────────────────────────────
