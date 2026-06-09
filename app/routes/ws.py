@@ -326,6 +326,17 @@ async def _handle_task_failed(tid: str, err: str):
 _rotate_lock = asyncio.Lock()
 
 
+async def _has_starting_or_active_account() -> bool:
+    """True when a Colab browser/worker is already starting or running."""
+    async with async_session() as db:
+        result = await db.execute(
+            select(func.count())
+            .select_from(GoogleAccount)
+            .where(GoogleAccount.status.in_(["CONNECTING", "ACTIVE"]))
+        )
+        return (result.scalar() or 0) > 0
+
+
 async def _try_auto_rotate():
     async with _rotate_lock:
         now = datetime.now(timezone.utc)

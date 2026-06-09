@@ -94,9 +94,12 @@ async def create_task(req: CreateTaskRequest, db: AsyncSession = Depends(get_db)
     else:
         # Nếu không có worker nào online (đang kết nối)
         if not manager.active:
-            from app.routes.ws import _try_auto_rotate
-            logger.info("No active workers online. Automatically starting an offline worker...")
-            asyncio.create_task(_try_auto_rotate())
+            from app.routes.ws import _try_auto_rotate, _rotate_lock, _has_starting_or_active_account
+            if not _rotate_lock.locked() and not await _has_starting_or_active_account():
+                logger.info("No active workers online. Starting one eligible worker...")
+                asyncio.create_task(_try_auto_rotate())
+            else:
+                logger.info("Worker/browser already starting; skip opening another browser.")
         else:
             from app.routes.ws import _maybe_scale_up
             asyncio.create_task(_maybe_scale_up())
@@ -124,9 +127,12 @@ async def create_task_direct(req: CreateTaskRequest, db: AsyncSession = Depends(
     # Try to dispatch immediately to an idle worker (or auto-start if none active)
     if not manager.get_idle_worker():
         if not manager.active:
-            from app.routes.ws import _try_auto_rotate
-            logger.info("No active workers online for direct request. Starting one...")
-            asyncio.create_task(_try_auto_rotate())
+            from app.routes.ws import _try_auto_rotate, _rotate_lock, _has_starting_or_active_account
+            if not _rotate_lock.locked() and not await _has_starting_or_active_account():
+                logger.info("No active workers online for direct request. Starting one eligible worker...")
+                asyncio.create_task(_try_auto_rotate())
+            else:
+                logger.info("Worker/browser already starting for direct request; skip opening another browser.")
             
         # Chờ worker online và chuyển sang IDLE trong tối đa 75 giây
         logger.info("Waiting up to 75 seconds for worker to start and connect...")
@@ -211,9 +217,12 @@ async def create_tasks_batch(req: CreateBatchTaskRequest, db: AsyncSession = Dep
     
     # Check if there are no online workers at all to trigger auto-start
     if not manager.active:
-        from app.routes.ws import _try_auto_rotate
-        logger.info("No active workers online for batch request. Starting one...")
-        asyncio.create_task(_try_auto_rotate())
+        from app.routes.ws import _try_auto_rotate, _rotate_lock, _has_starting_or_active_account
+        if not _rotate_lock.locked() and not await _has_starting_or_active_account():
+            logger.info("No active workers online for batch request. Starting one eligible worker...")
+            asyncio.create_task(_try_auto_rotate())
+        else:
+            logger.info("Worker/browser already starting for batch request; skip opening another browser.")
     else:
         from app.routes.ws import _maybe_scale_up
         asyncio.create_task(_maybe_scale_up())

@@ -81,15 +81,15 @@ async def tts_text(req: TextTTSRequest, db: AsyncSession = Depends(get_db)):
 
     # 2. Check for active workers
     if not manager.get_idle_worker():
-        if not manager.active:
-            from app.routes.ws import _try_auto_rotate
+        from app.routes.ws import _try_auto_rotate, _maybe_scale_up, _rotate_lock, _has_starting_or_active_account
+        # Only trigger rotation if no browser/worker is already starting/running
+        if not manager.active and not _rotate_lock.locked() and not await _has_starting_or_active_account():
             asyncio.create_task(_try_auto_rotate())
-        else:
-            from app.routes.ws import _maybe_scale_up
+        elif manager.active:
             asyncio.create_task(_maybe_scale_up())
         
-        # Wait for worker in direct mode
-        for _ in range(75):
+        # Wait for worker (max 30s for direct mode, not 75s)
+        for _ in range(30):
             await asyncio.sleep(1)
             if manager.get_idle_worker():
                 break
@@ -170,12 +170,11 @@ async def tts_batch(req: BatchTTSRequest, db: AsyncSession = Depends(get_db)):
     for task in created_tasks:
         await db.refresh(task)
 
-    # 3. Trigger auto-rotate / scale for batch
-    if not manager.active:
-        from app.routes.ws import _try_auto_rotate
+    # 3. Trigger auto-rotate / scale for batch (only if not already rotating)
+    from app.routes.ws import _try_auto_rotate, _on_batch_request, _rotate_lock, _has_starting_or_active_account
+    if not manager.active and not _rotate_lock.locked() and not await _has_starting_or_active_account():
         asyncio.create_task(_try_auto_rotate())
-    else:
-        from app.routes.ws import _on_batch_request
+    elif manager.active:
         asyncio.create_task(_on_batch_request())
 
     # 4. Attempt immediate dispatch
