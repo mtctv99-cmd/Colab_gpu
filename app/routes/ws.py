@@ -86,7 +86,7 @@ class ConnectionManager:
         self.worker_info.pop(email, None)
         logger.info("Worker disconnected: %s", email)
 
-    async def send_task(self, email: str, task_id: str, text: str, voice_api_url: str, language: str | None = None):
+    async def send_task(self, email: str, task_id: str, text: str, voice_api_url: str, language: str | None = None, voice_ref_text: str | None = None):
         ws = self.active.get(email)
         if ws is None:
             return False
@@ -95,6 +95,7 @@ class ConnectionManager:
             "task_id": task_id,
             "text": text,
             "voice_api_url": voice_api_url,
+            "voice_ref_text": voice_ref_text,
             "language": language,
         })
         return True
@@ -374,24 +375,46 @@ async def _handle_task_failed(task_id: str, error: str):
 _rotate_lock = asyncio.Lock()
 
 async def _try_auto_rotate():
-    """Find an OFFLINE account and start a new Colab worker. Loops if one fails."""
-    from datetime import timedelta
+    """Find an eligible account and start a new Colab worker.
+
+    Eligibility:
+      - OFFLINE with no cooldown, or cooldown expired.
+      - COOLDOWN only after quota_reset_at has passed.
+    Failed starts get short 15-minute backoff; real quota popups get 16h in play_runner.
+    """
     async with _rotate_lock:
         while True:
+            now = datetime.now(timezone.utc)
             async with async_session() as db:
+                # Release expired cooldowns first.
+                await db.execute(
+                    update(GoogleAccount)
+                    .where(
+                        GoogleAccount.status == "COOLDOWN",
+                        GoogleAccount.quota_reset_at.is_not(None),
+                        GoogleAccount.quota_reset_at <= now,
+                    )
+                    .values(status="OFFLINE", quota_reset_at=None)
+                )
+                await db.commit()
+
                 result = await db.execute(
                     select(GoogleAccount)
-                    .where(GoogleAccount.status == "OFFLINE")
+                    .where(
+                        GoogleAccount.status == "OFFLINE",
+                        (GoogleAccount.quota_reset_at.is_(None)) | (GoogleAccount.quota_reset_at <= now),
+                    )
+                    .order_by(GoogleAccount.last_active.asc().nullsfirst(), GoogleAccount.id.asc())
                     .limit(1)
                 )
                 next_account = result.scalar_one_or_none()
                 if not next_account:
-                    logger.info("No offline accounts available for rotation.")
+                    logger.info("No eligible offline accounts available for rotation.")
                     return
 
-                # Tạm thời set ACTIVE để giành quyền chạy
                 next_account.status = "ACTIVE"
-                next_account.last_active = datetime.now(timezone.utc)
+                next_account.last_active = now
+                next_account.quota_reset_at = None
                 email = next_account.email
                 await db.commit()
 
@@ -400,20 +423,17 @@ async def _try_auto_rotate():
                 logger.info("Attempting to auto-start worker for %s...", email)
                 await play_runner.start_colab_worker(email, config.SERVER_URL)
                 logger.info("Successfully auto-rotated to %s", email)
-                return  # Thành công, thoát hàm
+                return
             except Exception as exc:
-                # Nếu lỗi (ví dụ kẹt đăng nhập), set status thành COOLDOWN trong 1 giờ
+                # If play_runner already set NEEDS_LOGIN or COOLDOWN, keep it.
                 async with async_session() as db:
-                    result = await db.execute(
-                        select(GoogleAccount).where(GoogleAccount.email == email)
-                    )
+                    result = await db.execute(select(GoogleAccount).where(GoogleAccount.email == email))
                     acc = result.scalar_one_or_none()
-                    if acc:
+                    if acc and acc.status == "ACTIVE":
                         acc.status = "COOLDOWN"
-                        acc.quota_reset_at = datetime.now(timezone.utc) + timedelta(hours=1)
+                        acc.quota_reset_at = datetime.now(timezone.utc) + timedelta(minutes=15)
                     await db.commit()
-                logger.error("Failed to start worker for %s, trying next available account: %s", email, exc)
-                # Tiếp tục vòng lặp để thử tài khoản OFFLINE tiếp theo
+                logger.error("Failed to start worker for %s, trying next eligible account: %s", email, exc)
 
 
 async def _maybe_scale_up() -> None:

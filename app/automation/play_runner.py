@@ -17,7 +17,8 @@ from datetime import timedelta
 
 logger = logging.getLogger(__name__)
 
-CELL_START_TIMEOUT_SECONDS = 20
+CELL_START_TIMEOUT_SECONDS = 30
+CELL_START_BACKOFF_MINUTES = 15
 
 
 # JS utilities for Playwright automation - injected via add_init_script
@@ -653,7 +654,7 @@ async def _select_gpu_and_connect(page: Page, email: str) -> bool:
             if await _trigger_run_all(page, email):
                 if await _wait_for_colab_execution(page, email, CELL_START_TIMEOUT_SECONDS):
                     return True
-            await _mark_account_quota_reached(email)
+            await _mark_account_short_backoff(email)
             raise RuntimeError(f"Cell execution did not start within {CELL_START_TIMEOUT_SECONDS}s for {email}")
         logger.info("Account %s status: %s. Proceeding with GPU setup.", email, gpu_status)
     except RuntimeError:
@@ -713,22 +714,22 @@ async def _select_gpu_and_connect(page: Page, email: str) -> bool:
     await _dismiss_run_anyway_once(page, email)
 
     if not run_all_ok:
-        await _mark_account_quota_reached(email)
+        await _mark_account_short_backoff(email)
         raise RuntimeError(f"Could not queue Run All for {email}")
 
     if await _wait_for_colab_execution(page, email, CELL_START_TIMEOUT_SECONDS):
         return True
 
     logger.warning(
-        "Cell execution did not start within %ss for %s. Marking quota reached and rotating account.",
+        "Cell execution did not start within %ss for %s. Short backoff, will retry later.",
         CELL_START_TIMEOUT_SECONDS,
         email,
     )
-    await _mark_account_quota_reached(email)
+    await _mark_account_short_backoff(email)
     raise RuntimeError(f"Cell execution timeout for {email}")
 
 async def _mark_account_quota_reached(email: str) -> None:
-    """Đánh dấu tài khoản hết quota, nghỉ 16h."""
+    """Tài khoản bị Colab popup hết quota: cooldown 16h, không pickup."""
     try:
         from datetime import datetime, timezone, timedelta
         reset_time = datetime.now(timezone.utc) + timedelta(hours=QUOTA_RESET_HOURS)
@@ -736,12 +737,30 @@ async def _mark_account_quota_reached(email: str) -> None:
             await db.execute(
                 update(GoogleAccount)
                 .where(GoogleAccount.email == email)
-                .values(status="OFFLINE", quota_reset_at=reset_time)
+                .values(status="COOLDOWN", quota_reset_at=reset_time)
             )
             await db.commit()
-        logger.info("Account %s marked OFFLINE for %d hours due to quota/timeout.", email, QUOTA_RESET_HOURS)
+        logger.warning("Account %s marked COOLDOWN for %d hours (real quota popup).", email, QUOTA_RESET_HOURS)
     except Exception as e:
         logger.error("Failed to mark quota for %s: %s", email, e)
+
+
+async def _mark_account_short_backoff(email: str, minutes: int = None) -> None:
+    """Cell không start sau timeout (chưa chắc quota): backoff ngắn rồi cho dùng lại."""
+    try:
+        from datetime import datetime, timezone, timedelta
+        backoff = minutes if minutes is not None else CELL_START_BACKOFF_MINUTES
+        reset_time = datetime.now(timezone.utc) + timedelta(minutes=backoff)
+        async with async_session() as db:
+            await db.execute(
+                update(GoogleAccount)
+                .where(GoogleAccount.email == email)
+                .values(status="COOLDOWN", quota_reset_at=reset_time)
+            )
+            await db.commit()
+        logger.info("Account %s short backoff %d minutes (cell timeout, not real quota).", email, backoff)
+    except Exception as e:
+        logger.error("Failed to mark short backoff for %s: %s", email, e)
 
 
 async def _is_colab_execution_started(page: Page) -> bool:
@@ -766,15 +785,18 @@ async def _is_colab_execution_started(page: Page) -> bool:
 async def _wait_for_colab_execution(page: Page, email: str, timeout_seconds: int) -> bool:
     """Wait until a Colab cell starts running or produces early output.
 
-    Also dismisses GitHub "Run anyway" popup during the wait, because queued Run All
-    will not execute until that warning is accepted.
+    - Auto-dismiss "Run anyway" GitHub warning during wait.
+    - If a real quota popup is detected (e.g. "usage limit", "cannot connect"),
+      mark the account COOLDOWN 16h and abort by raising RuntimeError.
+    - Otherwise return False to let caller apply a short backoff.
     """
     deadline = asyncio.get_event_loop().time() + timeout_seconds
     while asyncio.get_event_loop().time() < deadline:
         quota_err = await _check_quota_or_errors(page)
-        if quota_err:
-            logger.error("Quota/connect error for %s while waiting cell start: %s", email, quota_err)
-            return False
+        if quota_err and "eval_error" not in str(quota_err):
+            logger.error("Quota popup detected for %s: %s. Cooldown 16h.", email, quota_err)
+            await _mark_account_quota_reached(email)
+            raise RuntimeError(f"Colab quota popup for {email}: {quota_err}")
 
         await _dismiss_run_anyway_once(page, email)
 

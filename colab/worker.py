@@ -117,18 +117,61 @@ def _audio_to_wav_bytes(audio: Any) -> bytes:
     raise TypeError(f"Unsupported model.generate output type: {type(audio)!r}")
 
 
-def run_tts(model: Any, text: str, reference_wav: str, language: str | None = None) -> bytes:
-    """Generate WAV bytes from text and reference audio."""
-    kwargs: dict[str, Any] = {}
-    if language:
-        kwargs["language"] = language
+def run_tts(model: Any, text: str, ref_audio: str, ref_text: str | None = None, language: str | None = None) -> bytes:
+    """Generate WAV bytes from text and reference audio.
+
+    OmniVoice package/API has changed across versions. Build kwargs from the
+    runtime signature so the reference voice is always passed with the right
+    parameter names, instead of silently falling back to a random/default voice.
+    """
+    import inspect
 
     try:
-        audio = model.generate(text, reference_wav=reference_wav, **kwargs)
-    except TypeError:
-        if language:
-            print("[warn] OmniVoice khong ho tro tham so language, chay auto mode.", flush=True)
-        audio = model.generate(text, reference_wav=reference_wav)
+        sig = inspect.signature(model.generate)
+        params = set(sig.parameters.keys())
+        print(f"[debug] model.generate params: {sorted(params)}", flush=True)
+    except Exception as exc:
+        print(f"[warn] Cannot inspect model.generate signature: {exc}", flush=True)
+        params = set()
+
+    kwargs: dict[str, Any] = {}
+
+    if "text" in params:
+        kwargs["text"] = text
+    elif "prompt" in params:
+        kwargs["prompt"] = text
+    elif "input_text" in params:
+        kwargs["input_text"] = text
+
+    if "ref_audio" in params:
+        kwargs["ref_audio"] = ref_audio
+    elif "reference_audio" in params:
+        kwargs["reference_audio"] = ref_audio
+    elif "reference_wav" in params:
+        kwargs["reference_wav"] = ref_audio
+    elif "prompt_audio" in params:
+        kwargs["prompt_audio"] = ref_audio
+
+    if ref_text:
+        if "ref_text" in params:
+            kwargs["ref_text"] = ref_text
+        elif "reference_text" in params:
+            kwargs["reference_text"] = ref_text
+        elif "prompt_text" in params:
+            kwargs["prompt_text"] = ref_text
+
+    if language and "language" in params:
+        kwargs["language"] = language
+
+    if kwargs:
+        print(f"[debug] model.generate kwargs keys: {sorted(kwargs.keys())}", flush=True)
+        audio = model.generate(**kwargs)
+    else:
+        print("[warn] Signature unknown; trying generate(text, ref_audio=...)", flush=True)
+        try:
+            audio = model.generate(text, ref_audio=ref_audio, ref_text=ref_text)
+        except TypeError:
+            audio = model.generate(text, reference_wav=ref_audio)
 
     return _audio_to_wav_bytes(audio)
 
@@ -180,6 +223,7 @@ async def handle_tts_task(
     task_id = data["task_id"]
     text = data["text"]
     voice_url = data["voice_api_url"]
+    ref_text = (data.get("voice_ref_text") or "").strip() or None
     language = data.get("language")
 
     short_text = text[:60] + ("..." if len(text) > 60 else "")
@@ -190,7 +234,7 @@ async def handle_tts_task(
         ref_path = await download_ref_audio(http_client, server_url, voice_url)
 
         started_at = time.time()
-        result_audio = run_tts(model, text, ref_path, language=language)
+        result_audio = run_tts(model, text, ref_path, ref_text=ref_text, language=language)
         tts_ms = round((time.time() - started_at) * 1000, 1)
 
         upload_url = f"{server_url}/api/tasks/{task_id}/complete"

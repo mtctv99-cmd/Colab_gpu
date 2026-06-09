@@ -386,9 +386,11 @@ async def _dispatch_task(task: Task, email: str, db: AsyncSession):
 
     # Build the voice download URL (the worker will fetch from this)
     base = config.SERVER_URL
+    voice = await db.get(Voice, task.voice_id)
     voice_url = f"{base}/api/voices/{task.voice_id}/audio"
+    voice_ref_text = voice.transcript if voice else None
 
-    dispatched = await manager.send_task(email, task.id, task.text, voice_url, task.language)
+    dispatched = await manager.send_task(email, task.id, task.text, voice_url, task.language, voice_ref_text)
     if dispatched:
         # Mark worker as BUSY in memory to prevent duplicate dispatches
         manager.worker_info[email]["status"] = "BUSY"
