@@ -1,13 +1,52 @@
-INFO:     Started server process [16360]
+INFO:     Started server process [72836]
 INFO:     Waiting for application startup.
-2026-06-09 08:49:25,778 [INFO] app.main: Cleaning up zombie browser processes...
-2026-06-09 08:49:26,552 [INFO] app.main: Initializing database...
-2026-06-09 08:49:26,572 [INFO] app.main: Database ready.
-2026-06-09 08:49:26,572 [INFO] app.main: Cleaning up orphan tasks...
-2026-06-09 08:49:26,592 [INFO] app.main: Orphan tasks cleaned up successfully.
-2026-06-09 08:49:26,593 [INFO] app.main: Scale-down background loop started.
+2026-06-09 08:57:32,635 [INFO] app.main: Cleaning up zombie browser processes...
+2026-06-09 08:57:33,325 [INFO] app.main: Initializing database...
+2026-06-09 08:57:33,340 [INFO] app.main: Database ready.
+2026-06-09 08:57:33,341 [INFO] app.main: Cleaning up orphan tasks...
+2026-06-09 08:57:33,358 [INFO] app.main: Orphan tasks cleaned up successfully.
+2026-06-09 08:57:33,358 [INFO] app.main: Scale-down background loop started.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
-INFO:     ('127.0.0.1', 49673) - "WebSocket /ws/dashboard" [accepted]
+2026-06-09 08:57:37,921 [INFO] app.main: \u2601\ufe0f  Cloudflare Tunnel URL: https://pty-dollar-dylan-funk.trycloudflare.com
+INFO:     ('34.19.96.110', 0) - "WebSocket /ws/worker" [accepted]
 INFO:     connection open
-2026-06-09 08:49:30,420 [INFO] app.main: \u2601\ufe0f  Cloudflare Tunnel URL: https://prizes-strongly-programmes-consoles.trycloudflare.com
+2026-06-09 08:57:46,469 [INFO] app.routes.ws: Worker connected: thanhchuapi2@gmail.com (GPU: Tesla T4)
+2026-06-09 08:57:46,471 [INFO] app.routes.ws: Starting WebSocket heartbeat loop...
+2026-06-09 08:57:46,494 [INFO] app.routes.ws: Found pending task b9a3fac5-6c19-4ea6-80b7-e76b024728f8 in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:57:51,237 [INFO] app.routes.ws: Found pending task 469858f4-9175-470d-8cb1-f63e778813ab in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:57:53,194 [INFO] app.routes.ws: Found pending task ccfdc6d6-1d6a-40c2-9694-c24d8bc7d485 in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:57:55,065 [INFO] app.routes.ws: Found pending task 8d163d96-0a40-4b3d-ab80-3e7576572f1a in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:57:56,681 [INFO] app.routes.ws: Found pending task 62e587c8-9866-423d-b572-3e3db92962ba in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:57:58,306 [INFO] app.routes.ws: Found pending task 5568804a-4c33-42ac-aedd-cbf4fe5a405c in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:57:59,927 [INFO] app.routes.ws: Found pending task aaca30ee-0382-407c-88e2-765dbd1af277 in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:58:01,565 [INFO] app.routes.ws: Found pending task 4cc17fd3-1026-4fd5-8705-1bafa306f884 in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:58:03,253 [INFO] app.routes.ws: Found pending task 15219c71-be7e-4aca-b5d3-639a1d8afad6 in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:58:05,199 [INFO] app.routes.ws: Found pending task 2eda3ec9-459d-4322-893c-fbb0bdac24fd in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:58:07,077 [INFO] app.routes.ws: Found pending task ea356ab8-af2e-486d-95a6-321931165179 in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:58:08,737 [INFO] app.routes.ws: Found pending task 7482344b-54d2-49dd-ab81-455e5bf4d986 in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:58:10,481 [INFO] app.routes.ws: Found pending task 6758cd2f-c6f7-4ab7-8550-d0ee1c0426f6 in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:58:12,156 [INFO] app.routes.ws: Found pending task 0cc31715-51d5-49c2-b669-af304040977d in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:58:13,817 [INFO] app.routes.ws: Found pending task 97e85481-6f06-465f-bded-9014aa94fa22 in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:58:15,441 [INFO] app.routes.ws: Found pending task c0ed341f-e7ab-48be-9ac0-2215a3302599 in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:58:17,497 [INFO] app.routes.ws: Found pending task f3977e56-f1f8-41be-acc3-8b9fc710d353 in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:58:19,292 [INFO] app.routes.ws: Found pending task b91241a0-aa5f-4784-bd07-2c0cf708f313 in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:58:20,827 [INFO] app.routes.ws: Found pending task 9029bb38-3fae-46b3-9aa6-cda4b31307ba in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:58:22,445 [INFO] app.routes.ws: Found pending task a1ea2304-ec9c-4d87-a217-4c88a55de64a in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:58:24,076 [INFO] app.routes.ws: Found pending task 61823e72-268b-4a24-a771-42b9812f7a1b in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:58:25,609 [INFO] app.routes.ws: Found pending task 28606e7e-2e1b-42ab-b060-372d71caa5b4 in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:58:27,234 [INFO] app.routes.ws: Found pending task a3e5e430-a3b6-4ce9-96b1-a3adb312b221 in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:58:30,400 [INFO] app.routes.ws: Found pending task 930ac24d-e13e-4381-9255-bd3fa15fd51c in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:58:31,989 [INFO] app.routes.ws: Found pending task c349b685-c560-4c8d-a292-24ba8570bd16 in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:58:33,660 [INFO] app.routes.ws: Found pending task 680b9b55-f54d-422d-b311-b691c17fa1ae in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:58:35,282 [INFO] app.routes.ws: Found pending task aeccc6b3-4112-4c89-8bd1-34bff03af499 in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:58:36,883 [INFO] app.routes.ws: Found pending task 7faa6f64-998b-4e56-9cc8-af66bb72e693 in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:58:38,546 [INFO] app.routes.ws: Found pending task e7b901d6-96b4-4d68-8129-bbeb26240168 in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:58:40,144 [INFO] app.routes.ws: Found pending task 9de451a6-c27e-4e1c-8aef-444e3fe4848c in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 08:58:42,206 [INFO] app.routes.ws: Found pending task e61835e5-0756-4b21-aeda-b5f53f8a5072 in queue, auto-dispatching to worker thanhchuapi2@gmail.com
+2026-06-09 09:07:03,715 [INFO] app.routes.ws: Scale-down: shutting down idle worker thanhchuapi2@gmail.com (idle=326s, active=1, keep_warm=0).
+2026-06-09 09:07:03,721 [INFO] app.routes.ws: Sent shutdown signal to worker thanhchuapi2@gmail.com
+2026-06-09 09:07:03,925 [INFO] app.routes.ws: Worker disconnected: thanhchuapi2@gmail.com
+INFO:     connection closed
+2026-06-09 09:07:06,606 [INFO] app.routes.ws: WebSocket heartbeat loop stopped.
+2026-06-09 09:07:06,745 [INFO] app.routes.ws: Browser context closed for worker thanhchuapi2@gmail.com
