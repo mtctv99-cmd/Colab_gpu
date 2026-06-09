@@ -221,23 +221,7 @@
       console.error("Dashboard refresh error:", err);
     }
   }
- else {
-        tbody.innerHTML = accounts
-          .map(
-            (a) => `
-          <tr>
-            <td>${esc(a.email)}</td>
-            <td><span class="status-badge ${a.status.toLowerCase()}">${a.status}</span></td>
-            <td>${a.gpu || "—"}</td>
-            <td>${a.last_active ? timeAgo(a.last_active) : "—"}</td>
-          </tr>`
-          )
-          .join("");
-      }
 
-      refreshRecentTasks();
-    } catch (_) {}
-  }
 
   async function refreshRecentTasks() {
     try {
