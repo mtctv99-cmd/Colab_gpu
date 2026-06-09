@@ -1,4 +1,6 @@
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import hashlib
@@ -7,9 +9,10 @@ import json
 import os
 import sys
 import time
-from typing import Any
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
+from pathlib import Path
+from typing import Any
 
 import httpx
 import soundfile as sf
@@ -19,9 +22,43 @@ import websockets
 SAMPLE_RATE = 24000
 REF_CACHE_DIR = Path("/tmp/omnivoice_refs")
 MODEL_ID = "k2-fsa/OmniVoice"
+TASK_QUEUE_MAXSIZE = 16
 
-# Toàn cầu hóa executor để dùng chung
 executor = ThreadPoolExecutor(max_workers=1)
+
+
+def configure_torch_runtime() -> None:
+    """Tune PyTorch defaults for Colab T4 inference without changing model API."""
+    try:
+        torch.set_grad_enabled(False)
+    except Exception:
+        pass
+
+    if not torch.cuda.is_available():
+        return
+
+    try:
+        torch.backends.cudnn.benchmark = True
+    except Exception:
+        pass
+
+    try:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+    except Exception:
+        pass
+
+    try:
+        torch.set_float32_matmul_precision("high")
+    except Exception:
+        pass
+
+
+def autocast_context():
+    if torch.cuda.is_available():
+        return torch.autocast(device_type="cuda", dtype=torch.float16)
+    return nullcontext()
+
 
 def normalize_server_url(server_url: str) -> str:
     normalized = (server_url or "").strip().rstrip("/")
@@ -29,183 +66,343 @@ def normalize_server_url(server_url: str) -> str:
         raise ValueError(f"SERVER_URL không hợp lệ: {server_url!r}")
     return normalized
 
+
 def websocket_url(server_url: str) -> str:
     if server_url.startswith("https://"):
         return "wss://" + server_url.removeprefix("https://") + "/ws/worker"
     return "ws://" + server_url.removeprefix("http://") + "/ws/worker"
 
+
 def detect_device() -> str:
+    configure_torch_runtime()
     if torch.cuda.is_available():
-        print(f"✅ GPU: {torch.cuda.get_device_name(0)}", flush=True)
+        gpu_name = torch.cuda.get_device_name(0)
+        total_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
+        print(f"✅ GPU: {gpu_name} | VRAM={total_gb:.1f}GB", flush=True)
         return "cuda:0"
     print("⚠️ KHÔNG có GPU! Chạy trên CPU.", flush=True)
     return "cpu"
 
+
+def cache_generate_signature(model: Any) -> set[str]:
+    import inspect
+
+    try:
+        params = set(inspect.signature(model.generate).parameters.keys())
+    except Exception:
+        params = set()
+    model._omnivoice_generate_params = params
+    print(f"[model] generate params cached: {sorted(params)}", flush=True)
+    return params
+
+
+def build_generate_kwargs(
+    params: set[str],
+    text: str,
+    ref_audio: str,
+    ref_text: str | None = None,
+    language: str | None = None,
+) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {}
+
+    if "text" in params:
+        kwargs["text"] = text
+    elif "prompt" in params:
+        kwargs["prompt"] = text
+    elif "input_text" in params:
+        kwargs["input_text"] = text
+    else:
+        kwargs["text"] = text
+
+    if "ref_audio" in params:
+        kwargs["ref_audio"] = ref_audio
+    elif "reference_audio" in params:
+        kwargs["reference_audio"] = ref_audio
+    elif "reference_wav" in params:
+        kwargs["reference_wav"] = ref_audio
+    elif "prompt_audio" in params:
+        kwargs["prompt_audio"] = ref_audio
+    else:
+        kwargs["ref_audio"] = ref_audio
+
+    if ref_text:
+        if "ref_text" in params:
+            kwargs["ref_text"] = ref_text
+        elif "reference_text" in params:
+            kwargs["reference_text"] = ref_text
+        elif "prompt_text" in params:
+            kwargs["prompt_text"] = ref_text
+
+    if language:
+        if "language" in params:
+            kwargs["language"] = language
+        elif "lang" in params:
+            kwargs["lang"] = language
+
+    if "use_cache" in params:
+        kwargs["use_cache"] = True
+
+    return kwargs
+
+
 def load_model(device: str) -> Any:
     print("🔄 Đang tải model OmniVoice...", flush=True)
     started_at = time.time()
+
     from omnivoice import OmniVoice
+
     model = OmniVoice.from_pretrained(
         MODEL_ID,
         device_map=device,
         dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
     )
+    cache_generate_signature(model)
     print(f"✅ Model loaded trong {time.time() - started_at:.1f}s", flush=True)
 
-    # Cache signature
-    import inspect
-    try:
-        sig = inspect.signature(model.generate)
-        model._omnivoice_generate_params = set(sig.parameters.keys())
-    except:
-        model._omnivoice_generate_params = set()
-
-    # Model Warmup
-    print("🔥 Đang Warmup model...", flush=True)
+    print("🔥 Đang warmup model...", flush=True)
     try:
         dummy_ref = "/tmp/warmup.wav"
         if not os.path.exists(dummy_ref):
             import numpy as np
-            sf.write(dummy_ref, np.zeros(SAMPLE_RATE), SAMPLE_RATE, format="WAV")
-        
-        # Determine execution context
-        is_cuda = torch.cuda.is_available()
-        context_autocast = torch.autocast(device_type="cuda", dtype=torch.float16) if is_cuda else torch.autocast(device_type="cpu", enabled=False)
+            sf.write(dummy_ref, np.zeros(SAMPLE_RATE, dtype="float32"), SAMPLE_RATE, format="WAV")
 
-        with torch.inference_mode(), context_autocast:
-            kwargs = {}
-            p = model._omnivoice_generate_params
-            if "text" in p: kwargs["text"] = "Warmup"
-            elif "prompt" in p: kwargs["prompt"] = "Warmup"
-            if "ref_audio" in p: kwargs["ref_audio"] = dummy_ref
-            elif "reference_audio" in p: kwargs["reference_audio"] = dummy_ref
-            
+        kwargs = build_generate_kwargs(model._omnivoice_generate_params, "Warmup", dummy_ref)
+        with torch.inference_mode(), autocast_context():
             model.generate(**kwargs)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         print("✅ Warmup thành công.", flush=True)
-    except Exception as e:
-        print(f"⚠️ Warmup lỗi (bỏ qua): {e}", flush=True)
-        
+    except Exception as exc:
+        print(f"⚠️ Warmup lỗi (bỏ qua): {exc}", flush=True)
+
     return model
+
 
 def _audio_to_wav_bytes(audio: Any) -> bytes:
     import numpy as np
-    if isinstance(audio, bytes): return audio
+
+    if isinstance(audio, bytes):
+        return audio
+
     if isinstance(audio, io.BytesIO):
         audio.seek(0)
         return audio.read()
+
     if isinstance(audio, dict):
-        for key in ("audio", "wav", "output", "samples"):
-            if key in audio: return _audio_to_wav_bytes(audio[key])
-        if audio: return _audio_to_wav_bytes(audio[next(iter(audio))])
+        for key in ("audio", "wav", "output", "samples", "waveform"):
+            if key in audio:
+                return _audio_to_wav_bytes(audio[key])
+        if audio:
+            return _audio_to_wav_bytes(audio[next(iter(audio))])
+
     if isinstance(audio, (list, tuple)):
+        if not audio:
+            raise ValueError("model.generate returned empty audio list")
         return _audio_to_wav_bytes(audio[0])
-    try:
-        if isinstance(audio, torch.Tensor):
-            audio = audio.detach().cpu().numpy()
-    except: pass
+
+    if isinstance(audio, torch.Tensor):
+        audio = audio.detach().float().cpu().numpy()
+
     if isinstance(audio, np.ndarray):
-        audio_np = audio.squeeze()
+        audio_np = audio.squeeze().astype("float32", copy=False)
         buffer = io.BytesIO()
         sf.write(buffer, audio_np, SAMPLE_RATE, format="WAV")
         return buffer.getvalue()
-    raise TypeError(f"Unsupported type: {type(audio)}")
+
+    raise TypeError(f"Unsupported model.generate output type: {type(audio)!r}")
+
 
 def run_tts(model: Any, text: str, ref_audio: str, ref_text: str | None = None, language: str | None = None) -> bytes:
     params = getattr(model, "_omnivoice_generate_params", set())
+    kwargs = build_generate_kwargs(params, text, ref_audio, ref_text=ref_text, language=language)
 
-    kwargs = {}
-    if "text" in params: kwargs["text"] = text
-    elif "prompt" in params: kwargs["prompt"] = text
-    
-    if "ref_audio" in params: kwargs["ref_audio"] = ref_audio
-    elif "reference_audio" in params: kwargs["reference_audio"] = ref_audio
-    
-    if "ref_text" in params and ref_text: kwargs["ref_text"] = ref_text
-    if "language" in params and language: kwargs["language"] = language
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
 
-    is_cuda = torch.cuda.is_available()
-    context_autocast = torch.autocast(device_type="cuda", dtype=torch.float16) if is_cuda else torch.autocast(device_type="cpu", enabled=False)
-
-    with torch.inference_mode(), context_autocast:
+    with torch.inference_mode(), autocast_context():
         output = model.generate(**kwargs)
+
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
 
     return _audio_to_wav_bytes(output)
 
+
 async def download_ref_audio(client: httpx.AsyncClient, server_url: str, voice_url: str) -> str:
     REF_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    url_hash = hashlib.md5(voice_url.encode()).hexdigest()
+    url_hash = hashlib.md5(voice_url.encode(), usedforsecurity=False).hexdigest()
     local_path = REF_CACHE_DIR / f"{url_hash}.wav"
-    
-    if local_path.exists():
+
+    if local_path.exists() and local_path.stat().st_size > 44:
         return str(local_path)
-    
+
     full_url = f"{server_url}{voice_url}" if voice_url.startswith("/") else voice_url
+    tmp_path = local_path.with_suffix(".tmp")
     resp = await client.get(full_url, timeout=30)
     resp.raise_for_status()
-    local_path.write_bytes(resp.content)
+    tmp_path.write_bytes(resp.content)
+    tmp_path.replace(local_path)
     return str(local_path)
 
-async def handle_tts_task(model, ws, http_client, server_url, data):
+
+async def send_json_safe(ws: Any, payload: dict[str, Any]) -> None:
+    try:
+        await ws.send(json.dumps(payload))
+    except Exception:
+        pass
+
+
+async def send_status(ws: Any, status: str, queue_size: int | None = None) -> None:
+    payload: dict[str, Any] = {"action": "status", "status": status}
+    if queue_size is not None:
+        payload["queue_size"] = queue_size
+    await send_json_safe(ws, payload)
+
+
+async def process_task(model: Any, ws: Any, http_client: httpx.AsyncClient, server_url: str, data: dict[str, Any]) -> None:
     task_id = data["task_id"]
     text = data["text"]
     voice_url = data["voice_api_url"]
     ref_text = (data.get("voice_ref_text") or "").strip() or None
     language = data.get("language")
 
-    try:
-        await ws.send(json.dumps({"action": "status", "status": "BUSY"}))
-        ref_path = await download_ref_audio(http_client, server_url, voice_url)
+    short_text = text[:70] + ("..." if len(text) > 70 else "")
+    print(f"[task] {task_id} | {short_text}", flush=True)
 
-        # Chạy inference trong thread riêng để không block websocket ping/pong
+    try:
+        ref_started = time.time()
+        ref_path = await download_ref_audio(http_client, server_url, voice_url)
+        ref_ms = (time.time() - ref_started) * 1000
+
         loop = asyncio.get_running_loop()
-        start_t = time.time()
+        tts_started = time.time()
         result_audio = await loop.run_in_executor(
             executor, run_tts, model, text, ref_path, ref_text, language
         )
-        tts_ms = (time.time() - start_t) * 1000
+        tts_ms = (time.time() - tts_started) * 1000
 
-        # Upload kết quả
+        upload_started = time.time()
         upload_url = f"{server_url}/api/tasks/{task_id}/complete"
-        await http_client.post(upload_url, files={"audio": ("res.wav", result_audio, "audio/wav")}, timeout=60)
-        
-        await ws.send(json.dumps({"action": "task_completed", "task_id": task_id}))
-        print(f"[OK] {task_id} | {tts_ms:.0f}ms", flush=True)
-    except Exception as e:
-        print(f"[ERR] {task_id}: {e}", flush=True)
-        await ws.send(json.dumps({"action": "task_failed", "task_id": task_id, "error": str(e)}))
-    finally:
-        await ws.send(json.dumps({"action": "status", "status": "IDLE"}))
+        upload_response = await http_client.post(
+            upload_url,
+            files={"audio": ("result.wav", result_audio, "audio/wav")},
+            timeout=120,
+        )
+        upload_response.raise_for_status()
+        upload_ms = (time.time() - upload_started) * 1000
 
-async def worker_loop(model, server_url, email):
+        await send_json_safe(ws, {"action": "task_completed", "task_id": task_id})
+        audio_seconds = len(result_audio) / (SAMPLE_RATE * 2)
+        peak_mb = 0.0
+        if torch.cuda.is_available():
+            peak_mb = torch.cuda.max_memory_allocated() / 1024**2
+        print(
+            f"[ok] {task_id} ref={ref_ms:.0f}ms tts={tts_ms:.0f}ms upload={upload_ms:.0f}ms "
+            f"audio~{audio_seconds:.1f}s peak={peak_mb:.0f}MB",
+            flush=True,
+        )
+    except Exception as exc:
+        print(f"[fail] {task_id}: {exc}", flush=True)
+        await send_json_safe(ws, {"action": "task_failed", "task_id": task_id, "error": str(exc)})
+
+
+async def task_consumer(
+    queue: asyncio.Queue[dict[str, Any]],
+    model: Any,
+    ws: Any,
+    http_client: httpx.AsyncClient,
+    server_url: str,
+) -> None:
+    while True:
+        data = await queue.get()
+        try:
+            await send_status(ws, "BUSY", queue.qsize())
+            await process_task(model, ws, http_client, server_url, data)
+        finally:
+            queue.task_done()
+            await send_status(ws, "IDLE" if queue.empty() else "BUSY", queue.qsize())
+
+
+async def worker_loop(model: Any, server_url: str, email: str) -> None:
     ws_url = websocket_url(server_url)
-    async with httpx.AsyncClient() as http_client:
+    limits = httpx.Limits(max_connections=8, max_keepalive_connections=4)
+
+    async with httpx.AsyncClient(limits=limits, http2=True, timeout=60) as http_client:
         while True:
+            consumer_task: asyncio.Task | None = None
+            task_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=TASK_QUEUE_MAXSIZE)
             try:
-                async with websockets.connect(ws_url, ping_interval=20, ping_timeout=10) as ws:
+                print(f"[ws] Connecting: {ws_url}", flush=True)
+                async with websockets.connect(
+                    ws_url,
+                    open_timeout=30,
+                    close_timeout=10,
+                    ping_interval=20,
+                    ping_timeout=10,
+                    max_queue=32,
+                ) as ws:
                     gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu"
                     await ws.send(json.dumps({"action": "register", "email": email, "gpu": gpu}))
-                    print(f"🚀 Connected: {email}", flush=True)
+                    consumer_task = asyncio.create_task(task_consumer(task_queue, model, ws, http_client, server_url))
+                    print(f"🚀 Connected: {email} (GPU: {gpu})", flush=True)
+                    await send_status(ws, "IDLE", 0)
+
                     while True:
-                        msg = await ws.recv()
-                        data = json.loads(msg)
-                        if data.get("action") == "run_tts":
-                            asyncio.create_task(handle_tts_task(model, ws, http_client, server_url, data))
-                        elif data.get("action") == "ping":
+                        raw = await ws.recv()
+                        data = json.loads(raw)
+                        action = data.get("action")
+
+                        if action == "run_tts":
+                            try:
+                                task_queue.put_nowait(data)
+                                await send_status(ws, "BUSY", task_queue.qsize())
+                            except asyncio.QueueFull:
+                                await send_json_safe(ws, {
+                                    "action": "task_failed",
+                                    "task_id": data.get("task_id"),
+                                    "error": "Worker queue full",
+                                })
+                        elif action == "ping":
                             await ws.send(json.dumps({"action": "pong"}))
-                        elif data.get("action") == "shutdown":
+                        elif action == "shutdown":
+                            print("[ws] Server yêu cầu shutdown.", flush=True)
+                            if consumer_task:
+                                consumer_task.cancel()
                             return
-            except Exception as e:
-                print(f"🔄 Reconnecting... ({e})", flush=True)
+            except Exception as exc:
+                print(f"🔄 Reconnecting... ({exc})", flush=True)
+                if consumer_task:
+                    consumer_task.cancel()
+                    try:
+                        await consumer_task
+                    except asyncio.CancelledError:
+                        pass
                 await asyncio.sleep(5)
 
-def main():
-    parser = argparse.ArgumentParser()
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Colab OmniVoice TTS Worker")
     parser.add_argument("--server-url", required=True)
     parser.add_argument("--email", required=True)
-    args = parser.parse_args()
-    
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    try:
+        server_url = normalize_server_url(args.server_url)
+    except ValueError as exc:
+        print(f"[error] {exc}", flush=True)
+        sys.exit(1)
+
+    email = args.email.strip()
+    if not email:
+        print("[error] EMAIL không được để trống.", flush=True)
+        sys.exit(1)
+
     model = load_model(detect_device())
-    asyncio.run(worker_loop(model, normalize_server_url(args.server_url), args.email))
+    asyncio.run(worker_loop(model, server_url, email))
+
 
 if __name__ == "__main__":
     main()
