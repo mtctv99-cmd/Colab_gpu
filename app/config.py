@@ -52,3 +52,7 @@ WORKER_KEEPALIVE_INTERVAL = 300  # 5 minutes in seconds
 QUOTA_RESET_HOURS = 16
 WORKER_TIMEOUT = 60  # seconds to wait for page load
 
+
+WORKER_MAX_LIFETIME = 3.75 * 3600  # 3 hours 45 minutes in seconds
+WORKER_HANDOVER_DELAY = 120  # seconds to wait for new worker ready
+AUTO_PICKUP_ENABLED = True  # start worker automatically at server boot

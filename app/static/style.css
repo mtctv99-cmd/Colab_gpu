@@ -690,3 +690,21 @@ audio::-webkit-media-controls-play-button {
   .account-actions { flex-direction: column; width: 100%; }
   .account-actions .btn { width: 100%; }
 }
+.status-badge.expiring {
+  background: #f39c12;
+  color: #fff;
+  animation: pulse-orange 2s infinite;
+}
+@keyframes pulse-orange {
+  0% { opacity: 1; }
+  50% { opacity: 0.6; }
+  100% { opacity: 1; }
+}
+.uptime-counter {
+  font-family: monospace;
+  font-weight: bold;
+  color: #27ae60;
+}
+.uptime-counter.expiring {
+  color: #e67e22;
+}

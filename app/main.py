@@ -92,9 +92,15 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(_start_cloudflare_tunnel())
 
     # Start background scale-down loop
-    from app.routes.ws import _scale_down_loop
+    from app.routes.ws import _scale_down_loop, _try_auto_rotate
     asyncio.create_task(_scale_down_loop())
     logger.info("Scale-down background loop started.")
+
+    # Auto-pickup: Start a worker immediately if enabled
+    from app.config import AUTO_PICKUP_ENABLED
+    if AUTO_PICKUP_ENABLED:
+        logger.info("Auto-pickup enabled. Starting initial worker...")
+        asyncio.create_task(_try_auto_rotate())
 
     yield
 

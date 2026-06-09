@@ -138,29 +138,90 @@
   }
 
   // ── Dashboard ──────────────────────────────────────
+  
+  
+  function formatDuration(s) {
+    if (s <= 0) return "00:00:00";
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sc = Math.floor(s % 60);
+    return [h, m, sc].map(v => v.toString().padStart(2, "0")).join(":");
+  }
+
+  let workerTimers = {};
+  function startWorkerTick() {
+    if (window._workerInterval) clearInterval(window._workerInterval);
+    window._workerInterval = setInterval(() => {
+      const els = document.querySelectorAll(".remaining-timer");
+      els.forEach(el => {
+        let s = parseInt(el.dataset.seconds);
+        if (s > 0) {
+          s--;
+          el.dataset.seconds = s;
+          el.textContent = formatDuration(s);
+          if (s < 600) el.style.color = "#e74c3c"; // Red if < 10min
+        }
+      });
+    }, 1000);
+  }
+
   async function refreshDashboard() {
     try {
-      const [accounts, tasks] = await Promise.all([
-        api("/api/accounts/"),
-        api("/api/tasks/?limit=20"),
+      const [hRes, wRes, sRes] = await Promise.all([
+        fetch("/api/health"),
+        fetch("/api/health/workers"),
+        fetch("/api/health/stats")
       ]);
+      const health = await hRes.json();
+      const workers = await wRes.json();
+      const stats = await sRes.json();
 
-      // Stats
-      const active = accounts.filter((a) => a.status === "ACTIVE").length;
-      const completed = tasks.filter((t) => t.status === "COMPLETED").length;
-      const pending = tasks.filter((t) => t.status === "PENDING").length;
-      const failed = tasks.filter((t) => t.status === "FAILED").length;
+      $("#statActiveWorkers").textContent = workers.length;
+      $("#statCompleted").textContent = stats.completed;
+      $("#statPending").textContent = stats.pending;
+      $("#statFailed").textContent = stats.failed;
 
-      $("#statActiveWorkers").textContent = active;
-      $("#statCompleted").textContent = completed;
-      $("#statPending").textContent = pending;
-      $("#statFailed").textContent = failed;
-
-      // Worker table
       const tbody = $("#workerTableBody");
-      if (accounts.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" class="empty-row">Chưa có worker nào kết nối</td></tr>';
-      } else {
+      if (workers.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-row">Chưa có worker nào kết nối</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = workers.map(w => {
+        const statusClass = w.status.toLowerCase();
+        const expiringTag = w.expiring ? '<span class="status-badge expiring">Bàn giao</span>' : '';
+        return `
+          <tr>
+            <td>
+              <div class="worker-email">${w.email}</div>
+              <div class="worker-subtext">${w.gpu}</div>
+            </td>
+            <td>
+              <span class="status-badge ${statusClass}">${w.status}</span>
+              ${expiringTag}
+            </td>
+            <td>
+              <div class="uptime-counter ${w.expiring ? 'expiring' : ''}">
+                ${formatDuration(w.uptime_seconds)}
+              </div>
+            </td>
+            <td>
+              <div class="remaining-timer" data-seconds="${w.remaining_seconds}">
+                ${formatDuration(w.remaining_seconds)}
+              </div>
+            </td>
+            <td>
+              <button class="btn-icon" onclick="stopWorker('${w.email}')" title="Stop">🛑</button>
+            </td>
+          </tr>
+        `;
+      }).join("");
+      startWorkerTick();
+    } catch (err) {
+      console.error("Dashboard refresh error:", err);
+    }
+  }
+ else {
         tbody.innerHTML = accounts
           .map(
             (a) => `
@@ -466,4 +527,19 @@
   // ── Init ───────────────────────────────────────────
   connectWebSocket();
   refreshDashboard();
+
+  async function stopWorker(email) {
+    if (!confirm("Dừng worker " + email + "?")) return;
+    try {
+      const accs = await (await fetch("/api/accounts/")).json();
+      const acc = accs.find(a => a.email === email);
+      if (!acc) { alert("Không tìm thấy account"); return; }
+      await fetch("/api/accounts/" + acc.id + "/stop", { method: "POST" });
+      addLog("info", "Đã dừng worker: " + email);
+      refreshDashboard();
+      refreshAccounts();
+    } catch (e) { alert("Lỗi: " + e.message); }
+  }
+  window.stopWorker = stopWorker;
+
 })();

@@ -19,6 +19,7 @@ class GoogleAccount(Base):
     last_active = Column(DateTime, nullable=True)
     quota_reset_at = Column(DateTime, nullable=True)
     colab_pid = Column(Integer, nullable=True)
+    started_at = Column(DateTime, nullable=True)
 
     tasks = relationship("Task", back_populates="worker")
 
@@ -52,4 +53,5 @@ class Task(Base):
 
     voice = relationship("Voice", back_populates="tasks")
     worker = relationship("GoogleAccount", back_populates="tasks")
+
 

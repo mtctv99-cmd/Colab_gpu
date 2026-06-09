@@ -112,7 +112,10 @@ _JS_UTILS = """
 
 
 # In-memory store for active browser contexts
-_active_contexts: dict[str, tuple] = {}  # email -> (playwright, context)
+_active_contexts: dict[str, dict] = {}  # email -> {pw, context, role, started_at, pid}
+
+ROLE_WORKER = "worker"
+ROLE_LOGIN = "login"
 _active_pages: dict[str, Page] = {}
 _keepalive_tasks: dict[str, asyncio.Task] = {}
 
@@ -159,7 +162,10 @@ async def cleanup_zombie_browsers(kill_active: bool = False) -> int:
         for entry in entries:
             cmd = (entry.get("CommandLine") or "").lower()
             pid = entry.get("ProcessId")
-            if not pid or profiles_base not in cmd:
+            if not pid:
+                continue
+            # Only kill browsers launched by this app (tagged with --colab-role)
+            if '--colab-role' not in cmd and profiles_base not in cmd:
                 continue
             if not kill_active and any(profile in cmd for profile in active_profiles):
                 continue
@@ -203,7 +209,8 @@ async def add_google_account_session(email: str) -> None:
             args=[
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
-                "--disable-blink-features=AutomationControlled"
+                "--disable-blink-features=AutomationControlled",
+                "--colab-role=login"
             ],
             ignore_default_args=["--enable-automation"]
         )
@@ -215,8 +222,8 @@ async def add_google_account_session(email: str) -> None:
         await _dismiss_chrome_restore_pages(page)
         await page.goto("https://accounts.google.com/")
 
-        # Store references so we can close later
-        _active_contexts[email] = (pw, context)  # type: ignore[assignment]
+        # Store references with role metadata
+        _active_contexts[email] = {"pw": pw, "context": context, "role": ROLE_LOGIN, "started_at": datetime.now(timezone.utc)}
         _active_pages[email] = page
         logger.info("Opened login window for %s", email)
     except Exception as exc:
@@ -668,7 +675,7 @@ async def _select_gpu_and_connect(page: Page, email: str) -> bool:
     except Exception:
         await page.evaluate("window.__colabUtils.findByText(document, ['Runtime', 'Thời gian chạy', 'Thoi gian chay'], null)?.click()")
 
-    await page.wait_for_timeout(200)
+    await page.wait_for_timeout(100)
 
     try:
         await page.get_by_text("Change runtime type", exact=True).first.click(timeout=3000, force=True)
@@ -698,7 +705,7 @@ async def _select_gpu_and_connect(page: Page, email: str) -> bool:
         const saveBtn = mwcDialog?.querySelector('[dialogAction="ok"], [dialogaction="ok"], button#ok, md-filled-button, paper-button');
         saveBtn?.click();
     }""")
-    await page.wait_for_timeout(500)
+    await page.wait_for_timeout(200)
 
     logger.info("Clicking Connect for %s, then queueing Run All immediately", email)
     await page.evaluate("""() => {
@@ -708,7 +715,7 @@ async def _select_gpu_and_connect(page: Page, email: str) -> bool:
         btn?.click();
     }""")
 
-    await page.wait_for_timeout(700)
+    await page.wait_for_timeout(300)
     run_all_ok = await _trigger_run_all(page, email)
     logger.info("Queued Run All after Connect for %s: %s", email, run_all_ok)
     await _dismiss_run_anyway_once(page, email)
@@ -941,7 +948,8 @@ async def start_colab_worker(email: str, server_url: str) -> None:
                 "--disable-blink-features=AutomationControlled",
                 "--disable-session-crashed-bubble",
                 "--disable-infobars",
-                "--no-first-run"
+                "--no-first-run",
+                "--colab-role=worker"
             ],
             ignore_default_args=["--enable-automation"],
             viewport={"width": 1280, "height": 800},
@@ -1063,7 +1071,7 @@ async def start_colab_worker(email: str, server_url: str) -> None:
             logger.warning("Failed to inject Keep-Alive JS for %s: %s", email, e)
 
         # Store references
-        _active_contexts[email] = (pw, context)  # type: ignore[assignment]
+        _active_contexts[email] = {"pw": pw, "context": context, "role": ROLE_WORKER, "started_at": datetime.now(timezone.utc)}
         _active_pages[email] = page
 
         # Start keep-alive task
@@ -1103,10 +1111,12 @@ async def stop_colab_worker(email: str) -> None:
     entry = _active_contexts.pop(email, None)
     _active_pages.pop(email, None)
     if entry is not None:
-        pw, ctx = entry
+        pw = entry["pw"]
+        ctx = entry["context"]
+        role = entry.get("role", "unknown")
         await ctx.close()
         await pw.stop()
-        logger.info("Stopped Colab worker for %s", email)
+        logger.info("Stopped browser [role=%s] for %s", role, email)
 
 
 async def _keepalive_loop(email: str) -> None:
