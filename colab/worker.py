@@ -51,17 +51,36 @@ def load_model(device: str) -> Any:
         dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
     )
     print(f"✅ Model loaded trong {time.time() - started_at:.1f}s", flush=True)
-    
+
+    # Cache signature
+    import inspect
+    try:
+        sig = inspect.signature(model.generate)
+        model._omnivoice_generate_params = set(sig.parameters.keys())
+    except:
+        model._omnivoice_generate_params = set()
+
     # Model Warmup
     print("🔥 Đang Warmup model...", flush=True)
     try:
-        # Tạo 1 file trắng giả để warmup
         dummy_ref = "/tmp/warmup.wav"
         if not os.path.exists(dummy_ref):
             import numpy as np
             sf.write(dummy_ref, np.zeros(SAMPLE_RATE), SAMPLE_RATE, format="WAV")
-        # Chạy inference giả
-        model.generate(text="Warmup", ref_audio=dummy_ref)
+        
+        # Determine execution context
+        is_cuda = torch.cuda.is_available()
+        context_autocast = torch.autocast(device_type="cuda", dtype=torch.float16) if is_cuda else torch.autocast(device_type="cpu", enabled=False)
+
+        with torch.inference_mode(), context_autocast:
+            kwargs = {}
+            p = model._omnivoice_generate_params
+            if "text" in p: kwargs["text"] = "Warmup"
+            elif "prompt" in p: kwargs["prompt"] = "Warmup"
+            if "ref_audio" in p: kwargs["ref_audio"] = dummy_ref
+            elif "reference_audio" in p: kwargs["reference_audio"] = dummy_ref
+            
+            model.generate(**kwargs)
         print("✅ Warmup thành công.", flush=True)
     except Exception as e:
         print(f"⚠️ Warmup lỗi (bỏ qua): {e}", flush=True)
@@ -92,14 +111,9 @@ def _audio_to_wav_bytes(audio: Any) -> bytes:
     raise TypeError(f"Unsupported type: {type(audio)}")
 
 def run_tts(model: Any, text: str, ref_audio: str, ref_text: str | None = None, language: str | None = None) -> bytes:
-    import inspect
-    try:
-        sig = inspect.signature(model.generate)
-        params = set(sig.parameters.keys())
-    except: params = set()
+    params = getattr(model, "_omnivoice_generate_params", set())
 
     kwargs = {}
-    # Map params động cho OmniVoice
     if "text" in params: kwargs["text"] = text
     elif "prompt" in params: kwargs["prompt"] = text
     
@@ -109,8 +123,12 @@ def run_tts(model: Any, text: str, ref_audio: str, ref_text: str | None = None, 
     if "ref_text" in params and ref_text: kwargs["ref_text"] = ref_text
     if "language" in params and language: kwargs["language"] = language
 
-    # Thực hiện Inference
-    output = model.generate(**kwargs)
+    is_cuda = torch.cuda.is_available()
+    context_autocast = torch.autocast(device_type="cuda", dtype=torch.float16) if is_cuda else torch.autocast(device_type="cpu", enabled=False)
+
+    with torch.inference_mode(), context_autocast:
+        output = model.generate(**kwargs)
+
     return _audio_to_wav_bytes(output)
 
 async def download_ref_audio(client: httpx.AsyncClient, server_url: str, voice_url: str) -> str:
