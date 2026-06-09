@@ -8,6 +8,7 @@ from app.routes.ws import manager
 router = APIRouter(prefix="/api/health", tags=["health"])
 
 
+@router.get("")
 @router.get("/")
 async def health_check():
     active_workers = len(manager.active)

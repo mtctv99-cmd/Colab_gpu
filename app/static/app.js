@@ -168,7 +168,7 @@
   async function refreshDashboard() {
     try {
       const [hRes, wRes, sRes] = await Promise.all([
-        fetch("/api/health"),
+        fetch("/api/health/"),
         fetch("/api/health/workers"),
         fetch("/api/health/stats")
       ]);
