@@ -226,6 +226,12 @@ async def add_google_account_session(email: str) -> None:
         _active_contexts[email] = {"pw": pw, "context": context, "role": ROLE_LOGIN, "started_at": datetime.now(timezone.utc)}
         _active_pages[email] = page
         logger.info("Opened login window for %s", email)
+
+        # Auto-close once Google login session detected
+        watcher = _login_watchers.get(email)
+        if watcher and not watcher.done():
+            watcher.cancel()
+        _login_watchers[email] = asyncio.create_task(_watch_google_login(email))
     except Exception as exc:
         await pw.stop()
         logger.error("Failed to open login window for %s: %s", email, exc)
@@ -234,19 +240,66 @@ async def add_google_account_session(email: str) -> None:
 
 async def finish_google_account_session(email: str) -> None:
     """Close the login browser window. Cookies are already persisted."""
+    watcher = _login_watchers.pop(email, None)
+    current = asyncio.current_task()
+    if watcher is not None and watcher is not current and not watcher.done():
+        watcher.cancel()
+        try:
+            await watcher
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+
     entry = _active_contexts.pop(email, None)
     _active_pages.pop(email, None)
-    if entry is not None:
-        pw, ctx = entry
+    if entry is None:
+        return
+
+    pw = entry["pw"] if isinstance(entry, dict) else entry[0]
+    ctx = entry["context"] if isinstance(entry, dict) else entry[1]
+    try:
+        await ctx.close()
+    except Exception as exc:
+        logger.debug("Failed to close context (possibly already closed): %s", exc)
+    try:
+        await pw.stop()
+    except Exception as exc:
+        logger.debug("Failed to stop playwright: %s", exc)
+    logger.info("Closed login window for %s", email)
+
+
+async def _watch_google_login(email: str) -> None:
+    """Auto-close login browser when Google session cookie SID appears."""
+    deadline = asyncio.get_event_loop().time() + LOGIN_WATCH_TIMEOUT_SECONDS
+    while asyncio.get_event_loop().time() < deadline:
+        await asyncio.sleep(2)
+        entry = _active_contexts.get(email)
+        if not entry:
+            return
+        ctx = entry["context"] if isinstance(entry, dict) else entry[1]
         try:
-            await ctx.close()
-        except Exception as exc:
-            logger.debug("Failed to close context (possibly already closed): %s", exc)
-        try:
-            await pw.stop()
-        except Exception as exc:
-            logger.debug("Failed to stop playwright: %s", exc)
-        logger.info("Closed login window for %s", email)
+            cookies = await ctx.cookies("https://accounts.google.com")
+        except Exception:
+            return
+        names = {c.get("name") for c in cookies}
+        if "SID" in names and ("SAPISID" in names or "HSID" in names):
+            logger.info("Detected Google login session for %s, auto-closing browser", email)
+            try:
+                await finish_google_account_session(email)
+                async with async_session() as db:
+                    result = await db.execute(select(GoogleAccount).where(GoogleAccount.email == email))
+                    account = result.scalar_one_or_none()
+                    if account:
+                        account.status = "OFFLINE"
+                        account.last_active = datetime.now(timezone.utc)
+                        await db.commit()
+                logger.info("Login session saved and account marked OFFLINE for %s", email)
+            except Exception as exc:
+                logger.warning("Auto-close failed for %s: %s", email, exc)
+            return
+    logger.warning("Login watcher for %s timed out after %ds", email, LOGIN_WATCH_TIMEOUT_SECONDS)
+
 
 
 async def _fill_colab_param(page: Page, param_name: str, value: str) -> bool:

@@ -250,6 +250,15 @@
   }
 
   // ── Accounts ───────────────────────────────────────
+  function cooldownLabel(iso) {
+    if (!iso) return "";
+    const diff = new Date(iso).getTime() - Date.now();
+    if (diff <= 0) return "";
+    const h = Math.floor(diff / 3600000);
+    const m = Math.floor((diff % 3600000) / 60000);
+    return h > 0 ? `Cooldown còn ${h}h ${m}m` : `Cooldown còn ${m}m`;
+  }
+
   async function refreshAccounts() {
     try {
       const accounts = await api("/api/accounts/");
@@ -259,37 +268,35 @@
         return;
       }
       el.innerHTML = accounts
-        .map(
-          (a) => `
+        .map((a) => {
+          const cd = cooldownLabel(a.quota_reset_at);
+          const inCooldown = !!cd;
+          const last = a.last_active ? timeAgo(a.last_active) : "chưa chạy";
+          const startBtn = a.status === "OFFLINE" && !inCooldown
+            ? `<button class="btn btn-sm btn-primary" onclick="startWorker(${a.id})">Khởi chạy</button>` : "";
+          const loginBtn = a.status === "CONNECTING"
+            ? `<button class="btn btn-sm btn-primary" onclick="finishLogin(${a.id})">Hoàn tất đăng nhập</button>` : "";
+          const stopBtn = (a.status === "ACTIVE" || a.status === "CONNECTING")
+            ? `<button class="btn btn-sm btn-ghost" onclick="stopWorker(${a.id})">Dừng</button>` : "";
+          return `
         <div class="account-card">
           <div class="account-header">
-            <div class="account-avatar">${a.email.charAt(0).toUpperCase()}</div>
+            <div class="account-avatar">${esc(a.email.charAt(0).toUpperCase())}</div>
             <div class="account-info">
               <div class="account-email">${esc(a.email)}</div>
-              <span class="status-badge ${a.status.toLowerCase()}">${a.status}</span>
+              <span class="status-badge ${a.status.toLowerCase()}">${esc(a.status)}</span>
             </div>
           </div>
-          <div class="account-actions">
-            ${
-              a.status === "OFFLINE"
-                ? `<button class="btn btn-sm btn-primary" onclick="startWorker(${a.id})">▶ Khởi chạy</button>`
-                : ""
-            }
-            ${
-              a.status === "CONNECTING"
-                ? `<button class="btn btn-sm btn-success" onclick="finishLogin(${a.id})">✅ Hoàn thành đăng nhập</button>`
-                : ""
-            }
-            ${
-              a.status === "ACTIVE"
-                ? `<button class="btn btn-sm btn-ghost" onclick="stopWorker(${a.id})">⏹ Dừng</button>`
-                : ""
-            }
-            <button class="btn btn-sm btn-danger" onclick="deleteAccount(${a.id})">🗑 Xóa</button>
+          <div class="account-meta">
+            <span>Lần cuối hoạt động: ${last}</span>
+            ${inCooldown ? `<span class="cooldown-line">${cd}</span>` : ""}
           </div>
-
-        </div>`
-        )
+          <div class="account-actions">
+            ${startBtn}${loginBtn}${stopBtn}
+            <button class="btn btn-sm btn-danger" onclick="deleteAccount(${a.id})">Xóa</button>
+          </div>
+        </div>`;
+        })
         .join("");
     } catch (_) {}
   }
@@ -305,8 +312,8 @@
         body: JSON.stringify({ email }),
       });
       addLog("info", `Đã gửi yêu cầu thêm tài khoản: ${email}`);
-      addLog("info", "Một cửa sổ Chrome sẽ mở ra. Vui lòng đăng nhập Google.");
-      addLog("info", "Sau khi đăng nhập xong, nhấn 'Hoàn thành đăng nhập' trong trang Accounts.");
+      addLog("info", "Cửa sổ Chrome sẽ mở ra. Đăng nhập Google bình thường.");
+      addLog("success", "Sau khi đăng nhập xong, server tự đóng Chrome (không cần thao tác tay).");
       $("#accountEmail").value = "";
       refreshAccounts();
     } catch (_) {}
@@ -342,8 +349,8 @@
           <div class="voice-name">${esc(v.name)}</div>
           <div class="voice-transcript">${esc(v.transcript || "")}</div>
           <div class="voice-actions">
-            <button class="btn btn-sm btn-ghost" onclick="playVoiceAudio(${v.id})">▶ Nghe mẫu</button>
-            <button class="btn btn-sm btn-danger" onclick="deleteVoice(${v.id})">🗑</button>
+            <button class="btn btn-sm btn-ghost" onclick="playVoiceAudio(${v.id})">Nghe mẫu</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteVoice(${v.id})">Xóa</button>
           </div>
         </div>`
         )
@@ -511,6 +518,10 @@
   // ── Init ───────────────────────────────────────────
   connectWebSocket();
   refreshDashboard();
+  setInterval(() => {
+    refreshDashboard();
+    refreshAccounts();
+  }, 15000);
 
   async function stopWorker(email) {
     if (!confirm("Dừng worker " + email + "?")) return;

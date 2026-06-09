@@ -3,29 +3,24 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Colab Worker TTS — Dashboard</title>
+  <title>Colab Worker TTS — Console</title>
   <link rel="stylesheet" href="/style.css" />
+  <link rel="icon" href="/favicon.ico" />
 </head>
 <body>
-  <!-- ── Sidebar ─────────────────────────────────────── -->
   <aside class="sidebar">
     <div class="sidebar-brand">
-      <span class="brand-icon">🎙️</span>
-      <span class="brand-text">Colab TTS</span>
+      <span class="brand-mark">CT</span>
+      <div>
+        <span class="brand-text">Colab TTS</span>
+        <span class="brand-subtitle">Worker Console</span>
+      </div>
     </div>
     <nav class="sidebar-nav">
-      <button class="nav-btn active" data-tab="dashboard">
-        <span class="nav-icon">📊</span> Dashboard
-      </button>
-      <button class="nav-btn" data-tab="accounts">
-        <span class="nav-icon">👤</span> Tài khoản
-      </button>
-      <button class="nav-btn" data-tab="voices">
-        <span class="nav-icon">🔊</span> Giọng nói
-      </button>
-      <button class="nav-btn" data-tab="tts">
-        <span class="nav-icon">✍️</span> Tạo TTS
-      </button>
+      <button class="nav-btn active" data-tab="dashboard"><span class="nav-index">01</span><span>Dashboard</span></button>
+      <button class="nav-btn" data-tab="accounts"><span class="nav-index">02</span><span>Tài khoản</span></button>
+      <button class="nav-btn" data-tab="voices"><span class="nav-index">03</span><span>Giọng nói</span></button>
+      <button class="nav-btn" data-tab="tts"><span class="nav-index">04</span><span>Tạo TTS</span></button>
     </nav>
     <div class="sidebar-footer">
       <div class="connection-status" id="wsStatus">
@@ -35,147 +30,82 @@
     </div>
   </aside>
 
-  <!-- ── Main Content ────────────────────────────────── -->
   <main class="main-content">
-
-    <!-- ===== TAB: Dashboard ===== -->
     <section class="tab-content active" id="tab-dashboard">
-      <h1 class="page-title">Giám sát Tổng quan</h1>
-
-      <!-- Stats Cards -->
-      <div class="stats-grid">
-        <div class="stat-card">
-          <div class="stat-label">Worker hoạt động</div>
-          <div class="stat-value" id="statActiveWorkers">0</div>
+      <div class="page-header">
+        <div>
+          <p class="eyebrow">Runtime Monitor</p>
+          <h1 class="page-title">Giám sát tổng quan</h1>
         </div>
-        <div class="stat-card">
-          <div class="stat-label">Task hoàn thành</div>
-          <div class="stat-value" id="statCompleted">0</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Đang chờ xử lý</div>
-          <div class="stat-value" id="statPending">0</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Thất bại</div>
-          <div class="stat-value stat-error" id="statFailed">0</div>
-        </div>
+        <p class="page-note">Theo dõi worker, quota, queue và trạng thái WebSocket trong một màn hình.</p>
       </div>
 
-      <!-- Worker Table -->
-      <div class="card">
-        <h2 class="card-title">Worker đang hoạt động</h2>
+      <div class="stats-grid">
+        <div class="stat-card"><div class="stat-label">Worker hoạt động</div><div class="stat-value" id="statActiveWorkers">0</div></div>
+        <div class="stat-card"><div class="stat-label">Task hoàn thành</div><div class="stat-value" id="statCompleted">0</div></div>
+        <div class="stat-card"><div class="stat-label">Đang chờ xử lý</div><div class="stat-value" id="statPending">0</div></div>
+        <div class="stat-card danger"><div class="stat-label">Thất bại</div><div class="stat-value stat-error" id="statFailed">0</div></div>
+      </div>
+
+      <div class="card table-card">
+        <div class="card-head"><h2 class="card-title">Worker đang hoạt động</h2><span class="card-meta">Tự bàn giao khi gần hết vòng đời</span></div>
         <table class="data-table">
-          <thead>
-            <tr>
-              <th>Worker</th>
-              <th>Trạng thái</th>
-              <th>Đã chạy</th>
-              <th>Còn lại</th>
-              <th>Hành động</th>
-            </tr>
-          </thead>
-          <tbody id="workerTableBody">
-            <tr><td colspan="5" class="empty-row">Chưa có worker nào kết nối</td></tr>
-          </tbody>
+          <thead><tr><th>Worker</th><th>Trạng thái</th><th>Đã chạy</th><th>Còn lại</th><th>Hành động</th></tr></thead>
+          <tbody id="workerTableBody"><tr><td colspan="5" class="empty-row">Chưa có worker nào kết nối</td></tr></tbody>
         </table>
       </div>
 
-      <!-- Recent Tasks -->
       <div class="card">
-        <h2 class="card-title">Task gần đây</h2>
-        <div id="recentTasks" class="task-list">
-          <div class="empty-row">Chưa có task nào</div>
-        </div>
+        <div class="card-head"><h2 class="card-title">Task gần đây</h2><span class="card-meta">20 task mới nhất</span></div>
+        <div id="recentTasks" class="task-list"><div class="empty-row">Chưa có task nào</div></div>
       </div>
     </section>
 
-    <!-- ===== TAB: Accounts ===== -->
     <section class="tab-content" id="tab-accounts">
-      <h1 class="page-title">Quản lý Tài khoản Google</h1>
+      <div class="page-header">
+        <div><p class="eyebrow">Account Pool</p><h1 class="page-title">Quản lý tài khoản Google</h1></div>
+        <p class="page-note">Thêm account, theo dõi cooldown quota, start/stop worker. Cửa sổ login tự đóng khi server thấy đủ session Google.</p>
+      </div>
 
-      <div class="card">
-        <h2 class="card-title">Thêm tài khoản mới</h2>
+      <div class="card action-card">
+        <div><h2 class="card-title">Thêm tài khoản mới</h2><p class="muted">Nhập email, đăng nhập trong Chrome mở ra. Khi session đủ cookie, Chrome tự đóng.</p></div>
         <form id="addAccountForm" class="inline-form">
           <input type="email" id="accountEmail" placeholder="email@gmail.com" required class="form-input" />
-          <button type="submit" class="btn btn-primary">➕ Thêm tài khoản</button>
+          <button type="submit" class="btn btn-primary">Thêm tài khoản</button>
         </form>
       </div>
 
       <div class="card">
-        <h2 class="card-title">Danh sách tài khoản</h2>
-        <div id="accountsList" class="accounts-grid">
-          <div class="empty-row">Chưa có tài khoản nào</div>
-        </div>
+        <div class="card-head"><h2 class="card-title">Danh sách tài khoản</h2><span class="card-meta">Chỉ account hết cooldown mới được pickup</span></div>
+        <div id="accountsList" class="accounts-grid"><div class="empty-row">Chưa có tài khoản nào</div></div>
       </div>
     </section>
 
-    <!-- ===== TAB: Voices ===== -->
     <section class="tab-content" id="tab-voices">
-      <h1 class="page-title">Thư viện Giọng nói</h1>
-
-      <div class="card">
-        <h2 class="card-title">Thêm giọng nói mới</h2>
+      <div class="page-header"><div><p class="eyebrow">Voice Library</p><h1 class="page-title">Thư viện giọng nói</h1></div><p class="page-note">Quản lý audio mẫu và transcript để clone giọng ổn định.</p></div>
+      <div class="card action-card">
+        <div><h2 class="card-title">Thêm giọng nói mới</h2><p class="muted">Nên dùng audio sạch 10–30 giây và transcript khớp nội dung.</p></div>
         <form id="addVoiceForm" class="voice-form">
-          <div class="form-row">
-            <input type="text" id="voiceName" placeholder="Tên giọng (VD: Giọng nam MB)" required class="form-input" />
-            <input type="file" id="voiceAudio" accept=".wav,.mp3" required class="form-input" />
-          </div>
-          <textarea id="voiceTranscript" placeholder="Nội dung văn bản của file âm thanh mẫu..." class="form-textarea"></textarea>
-          <button type="submit" class="btn btn-primary">➕ Thêm giọng nói</button>
+          <div class="form-row"><input type="text" id="voiceName" placeholder="Tên giọng" required class="form-input" /><input type="file" id="voiceAudio" accept=".wav,.mp3,.flac,.ogg,.m4a" required class="form-input" /></div>
+          <textarea id="voiceTranscript" placeholder="Transcript của audio mẫu..." class="form-textarea"></textarea>
+          <button type="submit" class="btn btn-primary">Thêm giọng nói</button>
         </form>
       </div>
-
-      <div class="card">
-        <h2 class="card-title">Danh sách giọng nói</h2>
-        <div id="voicesList" class="voices-grid">
-          <div class="empty-row">Chưa có giọng nói nào</div>
-        </div>
-      </div>
+      <div class="card"><div class="card-head"><h2 class="card-title">Danh sách giọng nói</h2><span class="card-meta">Audio mẫu được cache trên Colab worker</span></div><div id="voicesList" class="voices-grid"><div class="empty-row">Chưa có giọng nói nào</div></div></div>
     </section>
 
-    <!-- ===== TAB: TTS ===== -->
     <section class="tab-content" id="tab-tts">
-      <h1 class="page-title">Tạo TTS</h1>
-
-      <div class="card">
-        <h2 class="card-title">Chuyển văn bản thành giọng nói</h2>
-        <form id="ttsForm">
-          <textarea id="ttsText" placeholder="Nhập văn bản cần chuyển thành giọng nói..." class="form-textarea" rows="5" required></textarea>
-          <div class="form-row">
-            <select id="ttsVoice" class="form-input" required>
-              <option value="">-- Chọn giọng nói --</option>
-            </select>
-            <select id="ttsLanguage" class="form-input">
-              <option value="">-- Tự động nhận diện ngôn ngữ --</option>
-              <option value="vi">Tiếng Việt (vi)</option>
-              <option value="en">Tiếng Anh (en)</option>
-              <option value="zh">Tiếng Trung (zh)</option>
-            </select>
-            <button type="submit" class="btn btn-primary">🚀 Bắt đầu chuyển đổi</button>
-          </div>
+      <div class="page-header"><div><p class="eyebrow">Generate</p><h1 class="page-title">Tạo TTS</h1></div><p class="page-note">Gửi task vào queue. Worker rảnh sẽ pickup tự động.</p></div>
+      <div class="card action-card">
+        <div><h2 class="card-title">Chuyển văn bản thành giọng nói</h2><p class="muted">Text dài nên chia batch để queue xử lý ổn định.</p></div>
+        <form id="ttsForm" class="tts-form">
+          <textarea id="ttsText" placeholder="Nhập văn bản cần chuyển thành giọng nói..." class="form-textarea" rows="6" required></textarea>
+          <div class="form-row"><select id="ttsVoice" class="form-input" required><option value="">Chọn giọng nói</option></select><select id="ttsLanguage" class="form-input"><option value="">Tự nhận diện ngôn ngữ</option><option value="vi">Tiếng Việt</option><option value="en">Tiếng Anh</option><option value="zh">Tiếng Trung</option></select><button type="submit" class="btn btn-primary">Tạo audio</button></div>
         </form>
       </div>
-
-      <!-- Task Result Area -->
-      <div class="card" id="ttsResultArea" style="display: none;">
-        <h2 class="card-title">Kết quả</h2>
-        <div id="ttsResultContent">
-          <div class="task-status-line">
-            <span class="status-badge pending">Đang xử lý...</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- TTS Log -->
-      <div class="card">
-        <h2 class="card-title">Log tác vụ</h2>
-        <div id="ttsLog" class="log-area">
-          <div class="log-empty">Chưa có task nào được tạo.</div>
-        </div>
-      </div>
+      <div class="card" id="ttsResultArea" style="display: none;"><h2 class="card-title">Kết quả</h2><div id="ttsResultContent"><div class="task-status-line"><span class="status-badge pending">Đang xử lý</span></div></div></div>
+      <div class="card"><div class="card-head"><h2 class="card-title">Log tác vụ</h2><span class="card-meta">Mới nhất ở trên</span></div><div id="ttsLog" class="log-area"><div class="log-empty">Chưa có task nào được tạo.</div></div></div>
     </section>
-
   </main>
 
   <script src="/app.js"></script>
