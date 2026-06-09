@@ -17,6 +17,8 @@ from datetime import timedelta
 
 logger = logging.getLogger(__name__)
 
+CELL_START_TIMEOUT_SECONDS = 20
+
 
 # JS utilities for Playwright automation - injected via add_init_script
 _JS_UTILS = """
@@ -53,12 +55,38 @@ _JS_UTILS = """
             return 'disconnected';
         },
         checkRamConnected: function() {
+            // Connected detection for Colab's shadow DOM UI.
+            // Do NOT use "Run all" visibility: Run all can appear before runtime is connected.
             if (document.querySelector('colab-usage-meter')) return true;
-            const host = document.querySelector('colab-connect-button');
-            if (host && host.shadowRoot) {
-                const txt = host.shadowRoot.innerText || '';
-                if (txt.includes('Connected') || txt.includes('RAM')) return true;
+            if (document.querySelector('.memory-display')) return true;
+
+            function deepText(root, seen = new Set()) {
+                if (!root || seen.has(root)) return '';
+                seen.add(root);
+                let text = '';
+                if (root.nodeType === Node.ELEMENT_NODE) {
+                    text += ' ' + (root.innerText || root.textContent || '');
+                    if (root.shadowRoot) text += ' ' + deepText(root.shadowRoot, seen);
+                }
+                for (const child of (root.children || [])) {
+                    text += ' ' + deepText(child, seen);
+                }
+                return text;
             }
+
+            const connectBtn = document.querySelector('colab-connect-button');
+            if (connectBtn && connectBtn.shadowRoot) {
+                if (connectBtn.shadowRoot.querySelector('colab-usage-meter')) return true;
+                const txt = deepText(connectBtn.shadowRoot);
+                if (txt.includes('Connected')) return true;
+                if (txt.includes('RAM') && txt.includes('Disk')) return true;
+                if (txt.includes('T4') && !txt.toLowerCase().includes('connect')) return true;
+            }
+
+            // Page-level fallback: screenshot shows "RAM" and "Disk" in top-right when connected.
+            const pageText = deepText(document.body);
+            if (pageText.includes('RAM') && pageText.includes('Disk') && !pageText.includes('Connect to a hosted runtime')) return true;
+
             return false;
         },
         findElementByPatterns: function(patterns) {
@@ -333,6 +361,41 @@ async def _dismiss_chrome_restore_pages(page: Page) -> None:
         pass
 
 
+async def _dismiss_run_anyway_once(page: Page, email: str) -> bool:
+    """Fast non-blocking Run Anyway dismiss for wait loops."""
+    try:
+        result = await page.evaluate("""() => {
+            const dialog = document.querySelector('mwc-dialog[open], mwc-dialog[aria-hidden="false"], mwc-dialog');
+            if (!dialog || !dialog.hasAttribute('open')) return 'no-dialog';
+            const text = (dialog.innerText || dialog.textContent || '').toLowerCase();
+            if (!text.includes('run anyway') && !text.includes('warning') && !text.includes('github')) return 'not-run-anyway';
+
+            const textButtons = dialog.querySelectorAll('md-text-button');
+            const runAnywayHost = textButtons[1];
+            if (runAnywayHost) {
+                const innerBtn = runAnywayHost.shadowRoot?.querySelector('button');
+                if (innerBtn) innerBtn.click();
+                else runAnywayHost.click();
+                return 'dismissed-md-text-button-2';
+            }
+
+            const actionBtn = dialog.querySelector('[dialogAction="ok"], [dialogaction="ok"]');
+            if (actionBtn) {
+                const innerBtn = actionBtn.shadowRoot?.querySelector('button');
+                if (innerBtn) innerBtn.click();
+                else actionBtn.click();
+                return 'dismissed-action';
+            }
+            return 'no-button';
+        }""")
+        if result and 'dismissed' in result:
+            logger.info("Dismissed Run anyway once for %s: %s", email, result)
+            return True
+    except Exception as exc:
+        logger.debug("Fast Run anyway dismiss failed for %s: %s", email, exc)
+    return False
+
+
 async def _dismiss_colab_security_warning(page: Page, email: str) -> bool:
     """Click Colab's GitHub security warning: 'Run anyway'."""
     logger.info("Waiting for Colab 'Run anyway' warning for %s", email)
@@ -345,6 +408,56 @@ async def _dismiss_colab_security_warning(page: Page, email: str) -> bool:
         logger.debug("Could not save pre-dismiss screenshot: %s", exc)
 
     for attempt in range(60):
+        # Fast path: mwc-dialog > md-text-button[2] (shadow) > button
+        try:
+            shadow_result = await page.evaluate("""() => {
+                const dialog = document.querySelector('mwc-dialog[open], mwc-dialog[aria-hidden="false"], mwc-dialog');
+                if (!dialog || !dialog.hasAttribute('open')) return 'no-dialog';
+
+                // Exact XPath mapping: /mwc-dialog/md-text-button[2]//button/span[1]
+                const textButtons = dialog.querySelectorAll('md-text-button');
+                const runAnywayHost = textButtons[1];
+                if (runAnywayHost) {
+                    const shadow = runAnywayHost.shadowRoot;
+                    const innerBtn = shadow?.querySelector('button');
+                    if (innerBtn) {
+                        innerBtn.click();
+                        return 'dismissed-md-text-button-2';
+                    }
+                    runAnywayHost.click();
+                    return 'dismissed-md-text-button-2-host';
+                }
+
+                // Fallback: scan button text
+                const buttons = dialog.querySelectorAll('md-text-button, md-filled-button');
+                for (const btn of buttons) {
+                    const shadow = btn.shadowRoot;
+                    const innerBtn = shadow?.querySelector('button');
+                    const txt = (innerBtn?.innerText || btn.innerText || btn.textContent || '').toLowerCase();
+                    if (txt.includes('run anyway') || txt.includes('ok')) {
+                        if (innerBtn) innerBtn.click();
+                        else btn.click();
+                        return 'dismissed-shadow:' + txt.trim().slice(0, 40);
+                    }
+                }
+
+                // Also try direct dialogAction buttons
+                const actionBtn = dialog.querySelector('[dialogAction="ok"], [dialogaction="ok"]');
+                if (actionBtn) {
+                    const s = actionBtn.shadowRoot;
+                    if (s) { const b = s.querySelector('button'); if (b) b.click(); else actionBtn.click(); }
+                    else actionBtn.click();
+                    return 'dismissed-action';
+                }
+
+                return 'buttons-no-match';
+            }""")
+            if shadow_result and 'dismissed' in shadow_result:
+                logger.info("Dismissed Run anyway via shadow DOM for %s (attempt %d): %s", email, attempt + 1, shadow_result)
+                return True
+        except Exception as exc:
+            logger.debug("Shadow dismiss attempt %d: %s", attempt + 1, exc)
+
         try:
             ok_locator = page.locator(
                 '[dialogAction="ok"], [dialogaction="ok"], #ok, '
@@ -519,48 +632,50 @@ async def _mark_account_needs_login(email: str) -> None:
         logger.error("Failed to mark NEEDS_LOGIN for %s: %s", email, e)
 
 
-async def _select_gpu_and_connect(page: Page, email: str) -> None:
-    """Chọn GPU T4 và kết nối. Tối ưu: kiểm tra nếu đã có T4 thì bỏ qua, timeout 20s."""
-    logger.info("Starting GPU selection and connection for %s (Optimized)", email)
-    
-    # ── Bước -1: Kiểm tra cần login không ──────────────────────────
+async def _select_gpu_and_connect(page: Page, email: str) -> bool:
+    """Select T4, click Connect, queue Run All, then wait for cells to start.
+
+    Flow:
+      Connect -> Run All immediately -> wait CELL_START_TIMEOUT_SECONDS for cell execution.
+      If no cell starts, treat as quota/connect failure and rotate account.
+    """
+    logger.info("Starting GPU selection and queued Run All for %s", email)
+
     if await _check_login_required(page):
         logger.error("Account %s needs login. Stopping automation.", email)
         await _mark_account_needs_login(email)
         raise RuntimeError(f"Account {email} needs manual login")
 
-    # ── Bước 0: Kiểm tra nếu đã có T4 ─────────────────────────────
     try:
         gpu_status = await page.evaluate("window.__colabUtils.checkGpuStatus()")
         if gpu_status == 't4_connected':
-            logger.info("Account %s already has T4 connected. Skipping setup.", email)
-            return
+            logger.info("Account %s already has T4 connected. Queueing Run All immediately.", email)
+            if await _trigger_run_all(page, email):
+                if await _wait_for_colab_execution(page, email, CELL_START_TIMEOUT_SECONDS):
+                    return True
+            await _mark_account_quota_reached(email)
+            raise RuntimeError(f"Cell execution did not start within {CELL_START_TIMEOUT_SECONDS}s for {email}")
         logger.info("Account %s status: %s. Proceeding with GPU setup.", email, gpu_status)
+    except RuntimeError:
+        raise
     except Exception as e:
         logger.warning("Could not check initial GPU status for %s: %s", email, e)
 
-    # ── Bước 1: Mở Runtime menu & Change runtime type ──────────────
-    # (Sử dụng logic cache và selector nhanh hơn)
-    async def fast_shadow_click(texts):
-        return await page.evaluate(f"window.__colabUtils.findByText(document, {texts}, null)?.click()")
-
-    # Runtime menu
+    # Open Runtime -> Change runtime type
     try:
         await page.locator("#runtime-menu-button").click(timeout=3000, force=True)
     except Exception:
         await page.evaluate("window.__colabUtils.findByText(document, ['Runtime', 'Thời gian chạy', 'Thoi gian chay'], null)?.click()")
-    
+
     await page.wait_for_timeout(200)
 
-    # Change runtime type
     try:
         await page.get_by_text("Change runtime type", exact=True).first.click(timeout=3000, force=True)
     except Exception:
         await page.evaluate("window.__colabUtils.findByText(document, ['Change runtime type', 'Thay đổi loại thời gian chạy'], null)?.click()")
-    
+
     await page.wait_for_timeout(400)
-    
-    # ── Bước 2: Chọn T4 GPU ───────────────────────────────────────
+
     gpu_result = await page.evaluate("""() => {
         const mwcDialog = document.querySelector('mwc-dialog, colab-dialog, paper-dialog, [role="dialog"]');
         if (!mwcDialog) return 'no-dialog';
@@ -576,43 +691,41 @@ async def _select_gpu_and_connect(page: Page, email: str) -> None:
         return 'ok';
     }""")
     logger.info("GPU select result for %s: %s", email, gpu_result)
-    
-    # Click Save
+
     await page.evaluate("""() => {
         const mwcDialog = document.querySelector('mwc-dialog, colab-dialog, paper-dialog, [role="dialog"]');
         const saveBtn = mwcDialog?.querySelector('[dialogAction="ok"], [dialogaction="ok"], button#ok, md-filled-button, paper-button');
         saveBtn?.click();
     }""")
     await page.wait_for_timeout(500)
-    
-    # ── Bước 3: Kết nối và Đợi (Timeout 20s) ───────────────────────
-    logger.info("Connecting runtime for %s (150s timeout)...", email)
+
+    logger.info("Clicking Connect for %s, then queueing Run All immediately", email)
     await page.evaluate("""() => {
-        const btn = document.querySelector('colab-connect-button')?.shadowRoot?.querySelector('#connect, colab-toolbar-button');
+        const host = document.querySelector('colab-connect-button');
+        const shadow = host?.shadowRoot;
+        const btn = shadow?.querySelector('#connect, colab-toolbar-button, paper-button, button');
         btn?.click();
     }""")
-    
-    start_time = asyncio.get_event_loop().time()
-    connected = False
-    
-    while asyncio.get_event_loop().time() - start_time < 150:  # T4 GPU can take a long time
-        # Kiểm tra quota trước
-        quota_err = await _check_quota_or_errors(page)
-        if quota_err:
-            logger.error("Quota error for %s: %s", email, quota_err)
-            await _mark_account_quota_reached(email)
-            raise RuntimeError(f"Colab quota reached: {quota_err}")
-            
-        if await page.evaluate("window.__colabUtils.checkRamConnected()"):
-            connected = True
-            logger.info("Runtime connected for %s in %.1fs", email, asyncio.get_event_loop().time() - start_time)
-            break
-        await asyncio.sleep(1)
-        
-    if not connected:
-        logger.warning("Connection timeout (90s) for %s. T4 GPU allocation failed or queue full.", email)
+
+    await page.wait_for_timeout(700)
+    run_all_ok = await _trigger_run_all(page, email)
+    logger.info("Queued Run All after Connect for %s: %s", email, run_all_ok)
+    await _dismiss_run_anyway_once(page, email)
+
+    if not run_all_ok:
         await _mark_account_quota_reached(email)
-        raise RuntimeError(f"Connection timeout for {email}")
+        raise RuntimeError(f"Could not queue Run All for {email}")
+
+    if await _wait_for_colab_execution(page, email, CELL_START_TIMEOUT_SECONDS):
+        return True
+
+    logger.warning(
+        "Cell execution did not start within %ss for %s. Marking quota reached and rotating account.",
+        CELL_START_TIMEOUT_SECONDS,
+        email,
+    )
+    await _mark_account_quota_reached(email)
+    raise RuntimeError(f"Cell execution timeout for {email}")
 
 async def _mark_account_quota_reached(email: str) -> None:
     """Đánh dấu tài khoản hết quota, nghỉ 16h."""
@@ -629,6 +742,162 @@ async def _mark_account_quota_reached(email: str) -> None:
         logger.info("Account %s marked OFFLINE for %d hours due to quota/timeout.", email, QUOTA_RESET_HOURS)
     except Exception as e:
         logger.error("Failed to mark quota for %s: %s", email, e)
+
+
+async def _is_colab_execution_started(page: Page) -> bool:
+    """Return true if at least one Colab code cell looks running or has started."""
+    try:
+        return bool(await page.evaluate("""() => {
+            const cells = Array.from(document.querySelectorAll('colab-cell'));
+            for (const cell of cells) {
+                const txt = (cell.innerText || cell.textContent || '').trim();
+                const cls = cell.className || '';
+                if (String(cls).includes('running') || String(cls).includes('executing')) return true;
+                if (cell.hasAttribute?.('executing')) return true;
+                if (txt.includes('Đang cài đặt') || txt.includes('Running worker') || txt.includes('Clone repo')) return true;
+            }
+            if (document.querySelector('.cell-execution-indicator, .running, .executing')) return true;
+            return false;
+        }"""))
+    except Exception:
+        return False
+
+
+async def _wait_for_colab_execution(page: Page, email: str, timeout_seconds: int) -> bool:
+    """Wait until a Colab cell starts running or produces early output.
+
+    Also dismisses GitHub "Run anyway" popup during the wait, because queued Run All
+    will not execute until that warning is accepted.
+    """
+    deadline = asyncio.get_event_loop().time() + timeout_seconds
+    while asyncio.get_event_loop().time() < deadline:
+        quota_err = await _check_quota_or_errors(page)
+        if quota_err:
+            logger.error("Quota/connect error for %s while waiting cell start: %s", email, quota_err)
+            return False
+
+        await _dismiss_run_anyway_once(page, email)
+
+        if await _is_colab_execution_started(page):
+            logger.info("Cell execution started for %s", email)
+            return True
+        await asyncio.sleep(0.5)
+    return False
+
+
+async def _trigger_run_all(page, email) -> bool:
+    """Run All cells: click the toolbar Run button (nested shadow DOM).
+
+    XPath structure:
+      colab-notebook-toolbar
+        > colab-notebook-toolbar-run-button (shadow)
+          > colab-toolbar-button (shadow)
+            > md-text-button (shadow)
+              > button
+
+    Fallback 1: Runtime menu -> "Run all"
+    Fallback 2: Ctrl+F9
+    """
+    logger.info("Triggering Run All for %s", email)
+
+    # === Primary: click toolbar Run button through shadow DOM ===
+    for attempt in range(10):
+        try:
+            result = await page.evaluate("""() => {
+                // Navigate nested shadow DOM to reach the Run All button
+                const toolbar = document.querySelector('colab-notebook-toolbar');
+                if (!toolbar) return 'no-toolbar';
+
+                const runBtnHost = toolbar.querySelector('colab-notebook-toolbar-run-button');
+                if (!runBtnHost) return 'no-run-btn-host';
+
+                // First shadow: colab-notebook-toolbar-run-button
+                const shadow1 = runBtnHost.shadowRoot;
+                if (!shadow1) return 'no-shadow1';
+
+                const colabBtn = shadow1.querySelector('colab-toolbar-button');
+                if (!colabBtn) return 'no-colab-btn';
+
+                // Second shadow: colab-toolbar-button
+                const shadow2 = colabBtn.shadowRoot;
+                if (!shadow2) return 'no-shadow2';
+
+                const mdBtn = shadow2.querySelector('md-text-button, md-filled-button, button');
+                if (!mdBtn) return 'no-md-btn';
+
+                // Third shadow: md-text-button
+                const shadow3 = mdBtn.shadowRoot;
+                if (shadow3) {
+                    const innerBtn = shadow3.querySelector('button');
+                    if (innerBtn) {
+                        innerBtn.click();
+                        return 'clicked-inner-button';
+                    }
+                }
+
+                // Fallback: click the md-text-button itself
+                mdBtn.click();
+                return 'clicked-md-btn';
+            }""")
+
+            if result and 'clicked' in result:
+                logger.info("Run All toolbar click OK for %s (attempt %d): %s", email, attempt + 1, result)
+                await page.wait_for_timeout(1500)
+                return True
+
+            logger.debug("Run All toolbar attempt %d: %s", attempt + 1, result)
+        except Exception as exc:
+            logger.debug("Run All toolbar attempt %d error: %s", attempt + 1, exc)
+
+        await page.wait_for_timeout(500)
+
+    # === Fallback 1: Runtime menu -> Run all ===
+    logger.info("Toolbar failed, trying Runtime menu for %s", email)
+    for attempt in range(5):
+        try:
+            runtime_btn = page.locator("#runtime-menu-button")
+            if await runtime_btn.count() > 0 and await runtime_btn.is_visible():
+                await runtime_btn.click(timeout=2000, force=True)
+            else:
+                await page.evaluate(
+                    "document.querySelector('#runtime-menu-button')?.click() || "
+                    "window.__colabUtils?.findByText(document, ['Runtime'], null)?.click()"
+                )
+            await page.wait_for_timeout(400)
+
+            menu_result = await page.evaluate("""() => {
+                const items = document.querySelectorAll(
+                    '[role="menuitem"], .goog-menuitem, .goog-menuitem-content'
+                );
+                for (const item of items) {
+                    const txt = (item.innerText || item.textContent || '').trim();
+                    if (txt === 'Run all' || txt === 'Chạy tất cả') {
+                        item.click();
+                        return 'menu-clicked:' + txt;
+                    }
+                }
+                return 'menu-not-found';
+            }""")
+
+            if menu_result and 'clicked' in menu_result:
+                logger.info("Run All via menu for %s: %s", email, menu_result)
+                await page.wait_for_timeout(1500)
+                return True
+        except Exception as exc:
+            logger.debug("Menu attempt %d failed: %s", attempt + 1, exc)
+        await page.wait_for_timeout(300)
+
+    # === Fallback 2: Ctrl+F9 ===
+    logger.warning("All UI methods failed for %s, sending Ctrl+F9", email)
+    try:
+        await page.keyboard.press("Control+F9")
+        await page.wait_for_timeout(2000)
+        logger.info("Ctrl+F9 sent as final fallback for %s", email)
+        return True
+    except Exception as exc:
+        logger.error("Ctrl+F9 also failed for %s: %s", email, exc)
+    return False
+
 
 async def start_colab_worker(email: str, server_url: str) -> None:
     """Start a Colab worker: open the notebook, select GPU T4, fill configuration, run-all, and keep-alive."""
@@ -726,24 +995,13 @@ async def start_colab_worker(email: str, server_url: str) -> None:
         await _fill_colab_param(page, "SERVER_URL", server_url)
         await _fill_colab_param(page, "EMAIL", email)
 
-        # 2. Chọn GPU T4 & Connect
-        await _select_gpu_and_connect(page, email)
+        # 2. Chọn GPU T4, Connect, Run All ngay, chờ cell start tối đa 20s
+        run_all_ok = await _select_gpu_and_connect(page, email)
 
-        # 3. Dismiss Run anyway ngay sau khi Connect (có thể popup trong lúc chờ)
+        # 3. Dismiss Run anyway nếu popup còn tồn tại sau cell start
         dismissed = await _dismiss_colab_security_warning(page, email)
-
-        # 4. Click tất cả nút Play bằng JavaScript (Chắc chắn hơn Ctrl+F9)
-        logger.info("Triggering Run All via JS Play buttons for %s", email)
-        await page.evaluate("""() => {
-            const playButtons = document.querySelectorAll('.run-button, colab-run-button');
-            playButtons.forEach(btn => {
-                if (btn.shadowRoot) {
-                    btn.shadowRoot.querySelector('#icon')?.click();
-                } else {
-                    btn.click();
-                }
-            });
-        }""")
+        if dismissed:
+            logger.info("Run anyway dialog dismissed after queued run for %s", email)
 
         if dismissed:
             try:

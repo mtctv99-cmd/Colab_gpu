@@ -73,6 +73,50 @@ def load_model(device: str) -> Any:
     return model
 
 
+def _audio_to_wav_bytes(audio: Any) -> bytes:
+    """Normalize OmniVoice output to WAV bytes."""
+    import numpy as np
+
+    print(f"[debug] model.generate output type: {type(audio)!r}", flush=True)
+
+    if isinstance(audio, bytes):
+        return audio
+
+    if isinstance(audio, io.BytesIO):
+        audio.seek(0)
+        data = audio.read()
+        print(f"[debug] BytesIO output bytes={len(data)} head={data[:12]!r}", flush=True)
+        return data
+
+    if isinstance(audio, dict):
+        for key in ("audio", "wav", "output", "samples"):
+            if key in audio:
+                return _audio_to_wav_bytes(audio[key])
+        if audio:
+            first_key = next(iter(audio))
+            return _audio_to_wav_bytes(audio[first_key])
+
+    if isinstance(audio, (list, tuple)):
+        if not audio:
+            raise ValueError("model.generate returned empty audio list")
+        return _audio_to_wav_bytes(audio[0])
+
+    try:
+        import torch as _torch
+        if isinstance(audio, _torch.Tensor):
+            audio = audio.detach().cpu().numpy()
+    except Exception:
+        pass
+
+    if isinstance(audio, np.ndarray):
+        audio_np = audio.squeeze()
+        buffer = io.BytesIO()
+        sf.write(buffer, audio_np, SAMPLE_RATE, format="WAV")
+        return buffer.getvalue()
+
+    raise TypeError(f"Unsupported model.generate output type: {type(audio)!r}")
+
+
 def run_tts(model: Any, text: str, reference_wav: str, language: str | None = None) -> bytes:
     """Generate WAV bytes from text and reference audio."""
     kwargs: dict[str, Any] = {}
@@ -83,12 +127,10 @@ def run_tts(model: Any, text: str, reference_wav: str, language: str | None = No
         audio = model.generate(text, reference_wav=reference_wav, **kwargs)
     except TypeError:
         if language:
-            print("[warn] OmniVoice không hỗ trợ tham số language, chạy auto mode.", flush=True)
+            print("[warn] OmniVoice khong ho tro tham so language, chay auto mode.", flush=True)
         audio = model.generate(text, reference_wav=reference_wav)
 
-    buffer = io.BytesIO()
-    sf.write(buffer, audio, SAMPLE_RATE, format="WAV")
-    return buffer.getvalue()
+    return _audio_to_wav_bytes(audio)
 
 
 async def download_ref_audio(
@@ -109,6 +151,11 @@ async def download_ref_audio(
     print(f"  [download] {full_url}", flush=True)
     response = await http_client.get(full_url, timeout=30)
     response.raise_for_status()
+
+    # Validate response is actual audio (WAV starts with RIFF)
+    if not response.content[:4] == b"RIFF":
+        print(f"  [warn] Downloaded ref may not be WAV. First bytes: {response.content[:16]}", flush=True)
+
     with open(cached_path, "wb") as file:
         file.write(response.content)
     return cached_path
