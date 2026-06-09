@@ -496,7 +496,7 @@
           <td style="font-weight:600;color:var(--accent)">${u.balance.toLocaleString()}</td>
           <td><span class="status-badge ${u.is_active ? 'completed' : 'failed'}">${u.is_active ? 'Yes' : 'No'}</span></td>
           <td style="color:var(--faint);font-size:.85rem">${u.created_at ? new Date(u.created_at).toLocaleDateString() : ''}</td>
-          <td><button class="btn-icon" onclick="topupUser('${esc(u.email)}')" title="Nạp ký tự">💰</button></td>
+          <td><button class="btn btn-sm btn-primary" onclick="topupUser('${esc(u.email)}')">Nạp</button></td>
         </tr>
       `).join("");
     } catch (_) {}
@@ -504,7 +504,9 @@
 
   window.topupUser = async function (email) {
     const amount = prompt("Nhập số ký tự cần nạp cho " + email + ":", "10000");
-    if (!amount || parseInt(amount) <= 0) return;
+    if (!amount) return;
+    const n = parseInt(amount);
+    if (isNaN(n) || n <= 0 || n > 100000000) { addLog("error", "Số ký tự không hợp lệ (1 - 100,000,000)"); return; }
     try {
       const r = await api("/api/auth/admin/topup", {
         method: "POST",

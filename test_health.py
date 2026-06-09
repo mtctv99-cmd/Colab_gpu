@@ -38,5 +38,5 @@ print(f"{'OK' if r.status_code==200 else 'FAIL'} POST /api/auth/api-keys -> {r.s
 # Admin routes should 403 for regular user
 check("GET", "/api/accounts/", 403, headers={"Authorization": f"Bearer {token}"})
 
-print(f"\n{'='*30}\n{passed := 0 if failed == 0 else 0}/{failed := failed} tests failed")
+print(f"\n{'='*30}\n{failed} tests failed")
 sys.exit(1 if failed else 0)

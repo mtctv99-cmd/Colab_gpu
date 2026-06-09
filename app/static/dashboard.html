@@ -66,6 +66,7 @@
         <a id="navTts">Tạo TTS</a>
         <a id="navApiKeys">API Keys</a>
         <a id="navUsage">Lịch sử</a>
+        <a id="navAccount">Tài khoản</a>
         <a id="navLogout">Đăng xuất</a>
       </nav>
     </header>
@@ -104,6 +105,20 @@
         <div id="ttsResult" style="margin-top:16px;display:none">
           <audio controls style="width:100%"></audio>
         </div>
+      </div>
+    </div>
+
+    <div id="sectionAccount" style="display:none">
+      <div class="card">
+        <h2>🔐 Đổi mật khẩu</h2>
+        <form id="changePwdForm">
+          <label for="currentPassword">Mật khẩu hiện tại</label>
+          <input type="password" id="currentPassword" placeholder="••••••••" required style="margin-bottom:14px" />
+          <label for="newPassword">Mật khẩu mới</label>
+          <input type="password" id="newPassword" placeholder="Tối thiểu 6 ký tự" required minlength="6" style="margin-bottom:14px" />
+          <button type="submit" class="btn btn-primary" id="changePwdBtn">Đổi mật khẩu</button>
+        </form>
+        <div id="changePwdMsg" style="margin-top:12px;font-size:.85rem"></div>
       </div>
     </div>
 
@@ -310,7 +325,7 @@
     document.getElementById("createKeyBtn").addEventListener("click", createKey);
 
     function showSection(id) {
-      ["Dashboard","Tts","ApiKeys","Usage"].forEach(s => {
+      ["Dashboard","Tts","ApiKeys","Usage","Account"].forEach(s => {
         document.getElementById("section" + s).style.display = s === id ? "block" : "none";
         document.getElementById("nav" + s).className = s === id ? "active" : "";
       });
@@ -320,7 +335,34 @@
     document.getElementById("navTts").addEventListener("click", () => { showSection("Tts"); loadVoices(); });
     document.getElementById("navApiKeys").addEventListener("click", () => { showSection("ApiKeys"); loadApiKeys(); });
     document.getElementById("navUsage").addEventListener("click", () => { showSection("Usage"); loadUsage(); });
-    document.getElementById("navLogout").addEventListener("click", () => { localStorage.clear(); window.location.href = "/"; });
+    document.getElementById("navAccount").addEventListener("click", () => { showSection("Account"); });
+    document.getElementById("navLogout").addEventListener("click", () => {
+      if (confirm("Đăng xuất?")) { localStorage.clear(); window.location.href = "/"; }
+    });
+
+    // Change password
+    document.getElementById("changePwdForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const msg = document.getElementById("changePwdMsg");
+      const btn = document.getElementById("changePwdBtn");
+      const cur = document.getElementById("currentPassword").value;
+      const pwd = document.getElementById("newPassword").value;
+      btn.disabled = true; btn.textContent = "Đang xử lý...";
+      try {
+        const r = await api("/api/auth/change-password", {
+          method: "POST",
+          body: JSON.stringify({ current_password: cur, new_password: pwd }),
+        });
+        msg.textContent = "Mật khẩu đã được cập nhật!";
+        msg.style.color = "var(--green)";
+        document.getElementById("currentPassword").value = "";
+        document.getElementById("newPassword").value = "";
+      } catch (e) {
+        msg.textContent = "Lỗi: " + e.message;
+        msg.style.color = "var(--red)";
+      }
+      btn.disabled = false; btn.textContent = "Đổi mật khẩu";
+    });
 
     const user = getUser();
     if (!user || !getToken()) { window.location.href = "/login"; }

@@ -27,9 +27,13 @@
     label { display: block; font-size: .85rem; font-weight: 500; color: var(--muted); margin-bottom: 6px; }
     input { width: 100%; padding: 12px 16px; background: #1A1A1F; border: 1px solid var(--line); border-radius: 12px; color: var(--text); font-size: .95rem; outline: none; margin-bottom: 18px; }
     input:focus { border-color: var(--accent); }
-    .btn { width: 100%; padding: 13px; border-radius: 12px; font-weight: 600; font-size: 1rem; cursor: pointer; border: none; background: var(--accent); color: #09090B; }
+    .btn { width: 100%; padding: 13px; border-radius: 12px; font-weight: 600; font-size: 1rem; cursor: pointer; border: none; background: var(--accent); color: #09090B; display:flex;align-items:center;justify-content:center;gap:8px }
     .btn:hover { opacity: .9; }
     .btn:disabled { opacity: .4; cursor: not-allowed; }
+    .spinner { width:18px;height:18px;border:2px solid rgba(0,0,0,.2);border-top-color:#09090B;border-radius:50%;animation:spin .6s linear infinite;display:none }
+    .btn.loading .spinner { display:inline-block }
+    .btn.loading .btn-text { display:none }
+    @keyframes spin { to { transform:rotate(360deg) } }
     .error { color: var(--red); font-size: .85rem; margin-bottom: 12px; display: none; }
     .error.show { display: block; }
     .link { text-align: center; margin-top: 20px; font-size: .9rem; color: var(--muted); }
@@ -46,7 +50,7 @@
       <input type="email" id="email" placeholder="your@email.com" required autocomplete="email" />
       <label for="password">Mật khẩu</label>
       <input type="password" id="password" placeholder="Tối thiểu 6 ký tự" required minlength="6" autocomplete="new-password" />
-      <button type="submit" class="btn" id="submitBtn">Đăng ký</button>
+      <button type="submit" class="btn" id="submitBtn"><span class="spinner"></span><span class="btn-text">Đăng ký</span></button>
     </form>
     <div class="link">Đã có tài khoản? <a href="/login">Đăng nhập</a></div>
   </div>
@@ -62,7 +66,7 @@
       e.preventDefault();
       error.className = "error";
       btn.disabled = true;
-      btn.textContent = "Đang xử lý...";
+      btn.classList.add("loading");
       try {
         const r = await fetch("/api/auth/signup", {
           method: "POST",
@@ -73,7 +77,7 @@
         if (!r.ok) {
           error.textContent = data.message || data.detail || "Đăng ký thất bại";
           error.className = "error show";
-          btn.disabled = false; btn.textContent = "Đăng ký";
+          btn.disabled = false; btn.classList.remove("loading");
           return;
         }
         localStorage.setItem("token", data.token);
@@ -82,7 +86,7 @@
       } catch (err) {
         error.textContent = "Lỗi kết nối đến server";
         error.className = "error show";
-        btn.disabled = false; btn.textContent = "Đăng ký";
+        btn.disabled = false; btn.classList.remove("loading");
       }
     });
   </script>

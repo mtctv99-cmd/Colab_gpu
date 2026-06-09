@@ -9,9 +9,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from pathlib import Path as _Path
 
 
 from app.config import HOST, PORT, STATIC_DIR, CLOUDFLARED_ENABLED
@@ -122,6 +123,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.exception_handler(404)
+async def not_found_handler(request: Request, exc):
+    _404_path = STATIC_DIR / "404.html"
+    if _404_path.exists():
+        return HTMLResponse(_404_path.read_text(encoding="utf-8"), status_code=404)
+    return JSONResponse({"error": "not_found", "message": "Not found"}, status_code=404)
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
