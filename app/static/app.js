@@ -542,6 +542,7 @@
   // ── Log ────────────────────────────────────────────
   function addLog(type, message) {
     const el = $("#ttsLog");
+    if (!el) return;
     const empty = el.querySelector(".log-empty");
     if (empty) empty.remove();
 
@@ -551,7 +552,6 @@
     div.textContent = `[${time}] ${message}`;
     el.prepend(div);
 
-    // Keep max 100 entries
     while (el.children.length > 100) el.lastChild.remove();
   }
 
