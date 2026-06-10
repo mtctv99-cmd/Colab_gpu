@@ -67,6 +67,7 @@
     const btn = document.getElementById("submitBtn");
 
     const params = new URLSearchParams(location.search);
+    if (params.get("registered")) {
       error.textContent = "Đăng ký thành công! Vui lòng đăng nhập.";
       error.className = "error show";
       error.style.color = "var(--green)";
