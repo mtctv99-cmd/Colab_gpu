@@ -124,6 +124,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def no_cache_html(request: Request, call_next):
+    response = await call_next(request)
+    if response.headers.get("content-type", "").startswith("text/html"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 @app.exception_handler(404)
 async def not_found_handler(request: Request, exc):
     _404_path = STATIC_DIR / "404.html"
@@ -178,7 +188,7 @@ _PAGE_FILES = {"/login": "login.html", "/signup": "signup.html", "/dashboard": "
 for _route, _file in _PAGE_FILES.items():
     _path_obj = _HTML_DIR / _file
     if _path_obj.exists():
-        app.add_api_route(_route, lambda f=_path_obj: FileResponse(str(f)), methods=["GET"], include_in_schema=False)
+        app.add_api_route(_route, lambda f=_path_obj: FileResponse(str(f), headers={"Cache-Control": "no-cache, no-store, must-revalidate"}), methods=["GET"], include_in_schema=False)
 
 # Serve static files (admin dashboard at /admin/, landing at /)
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
