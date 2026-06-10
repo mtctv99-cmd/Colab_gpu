@@ -283,62 +283,58 @@
   async function refreshAccounts() {
     try {
       const accounts = await api("/api/accounts/");
+
+      // Card view (original dashboard)
       const el = $("#accountsList");
-      if (accounts.length === 0) {
-        el.innerHTML = '<div class="empty-row">Chưa có tài khoản nào</div>';
-        return;
+      if (el) {
+        if (accounts.length === 0) {
+          el.innerHTML = '<div class="empty-row">Chưa có tài khoản nào</div>';
+        } else {
+          el.innerHTML = accounts.map((a) => {
+            const cd = cooldownLabel(a.quota_reset_at);
+            const inCooldown = !!cd;
+            const last = a.last_active ? timeAgo(a.last_active) : "chưa chạy";
+            const startBtn = a.status === "OFFLINE" && !inCooldown ? `<button class="btn btn-sm btn-primary" onclick="startWorker(${a.id})">Khởi chạy</button>` : "";
+            const loginBtn = a.status === "CONNECTING" ? `<button class="btn btn-sm btn-primary" onclick="finishLogin(${a.id})">Hoàn tất đăng nhập</button>` : "";
+            const stopBtn = (a.status === "ACTIVE" || a.status === "CONNECTING") ? `<button class="btn btn-sm btn-ghost" onclick="stopWorker(${a.id})">Dừng</button>` : "";
+            return `<div class="account-card">...<div class="account-email">${esc(a.email)}</div>...${startBtn}${loginBtn}${stopBtn}...`;
+          }).join("");
+        }
       }
-      el.innerHTML = accounts
-        .map((a) => {
-          const cd = cooldownLabel(a.quota_reset_at);
-          const inCooldown = !!cd;
-          const last = a.last_active ? timeAgo(a.last_active) : "chưa chạy";
-          const startBtn = a.status === "OFFLINE" && !inCooldown
-            ? `<button class="btn btn-sm btn-primary" onclick="startWorker(${a.id})">Khởi chạy</button>` : "";
-          const loginBtn = a.status === "CONNECTING"
-            ? `<button class="btn btn-sm btn-primary" onclick="finishLogin(${a.id})">Hoàn tất đăng nhập</button>` : "";
-          const stopBtn = (a.status === "ACTIVE" || a.status === "CONNECTING")
-            ? `<button class="btn btn-sm btn-ghost" onclick="stopWorker(${a.id})">Dừng</button>` : "";
-          return `
-        <div class="account-card">
-          <div class="account-header">
-            <div class="account-avatar">${esc(a.email.charAt(0).toUpperCase())}</div>
-            <div class="account-info">
-              <div class="account-email">${esc(a.email)}</div>
-              <span class="status-badge ${a.status.toLowerCase()}">${esc(a.status)}</span>
-            </div>
-          </div>
-          <div class="account-meta">
-            <span>Lần cuối hoạt động: ${last}</span>
-            ${inCooldown ? `<span class="cooldown-line">${cd}</span>` : ""}
-          </div>
-          <div class="account-actions">
-            ${startBtn}${loginBtn}${stopBtn}
-            <button class="btn btn-sm btn-danger" onclick="deleteAccount(${a.id})">Xóa</button>
-          </div>
-        </div>`;
-        })
-        .join("");
+
+      // Table view (admin dashboard)
+      const tbody = document.getElementById("accountTableBody");
+      if (tbody) {
+        if (accounts.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--faint)">Chưa có tài khoản</td></tr>';
+        } else {
+          tbody.innerHTML = accounts.map(a => {
+            const btnStart = a.status === "OFFLINE" && !cooldownLabel(a.quota_reset_at) ? `<button class="btn btn-sm btn-primary" onclick="startWorker(${a.id})">Start</button>` : "";
+            const btnStop = a.status === "ACTIVE" || a.status === "CONNECTING" ? `<button class="btn btn-sm btn-ghost" onclick="stopWorker(${a.id})">Stop</button>` : "";
+            return `<tr><td>${esc(a.email)}</td><td><span class="status-badge ${a.status.toLowerCase()}">${a.status}</span></td><td style="color:var(--faint);font-size:.85rem">${a.quota_reset_at ? new Date(a.quota_reset_at).toLocaleDateString() : '-'}</td><td>${btnStart}${btnStop}</td></tr>`;
+          }).join("");
+        }
+      }
     } catch (_) {}
   }
 
   // Account form
-  $("#addAccountForm").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const email = $("#accountEmail").value.trim();
-    if (!email) return;
-    try {
-      await api("/api/accounts/add", {
-        method: "POST",
-        body: JSON.stringify({ email }),
-      });
-      addLog("info", `Đã gửi yêu cầu thêm tài khoản: ${email}`);
-      addLog("info", "Cửa sổ Chrome sẽ mở ra. Đăng nhập Google bình thường.");
-      addLog("success", "Sau khi đăng nhập xong, server tự đóng Chrome (không cần thao tác tay).");
-      $("#accountEmail").value = "";
-      refreshAccounts();
-    } catch (_) {}
-  });
+  const _addForm = $("#addAccountForm");
+  if (_addForm) {
+    _addForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const email = $("#accountEmail").value.trim();
+      if (!email) return;
+      try {
+        await api("/api/accounts/add", { method: "POST", body: JSON.stringify({ email }) });
+        addLog("info", `Đã gửi yêu cầu thêm tài khoản: ${email}`);
+        addLog("info", "Cửa sổ Chrome sẽ mở ra. Đăng nhập Google bình thường.");
+        addLog("success", "Sau khi đăng nhập xong, server tự đóng Chrome (không cần thao tác tay).");
+        $("#accountEmail").value = "";
+        refreshAccounts();
+      } catch (_) {}
+    });
+  }
 
   // ── Voices ─────────────────────────────────────────
   async function refreshVoices() {
@@ -346,66 +342,87 @@
       const voices = await api("/api/voices/");
       const el = $("#voicesList");
       const select = $("#ttsVoice");
+      if (!el && !select) return;
 
       // Update voice dropdown
-      const currentVal = select.value;
-      select.innerHTML = '<option value="">-- Chọn giọng nói --</option>';
-      voices.forEach((v) => {
-        const opt = document.createElement("option");
-        opt.value = v.id;
-        opt.textContent = v.name;
-        select.appendChild(opt);
-      });
-      if (currentVal) select.value = currentVal;
+      if (select) {
+        const currentVal = select.value;
+        select.innerHTML = '<option value="">-- Chọn giọng nói --</option>';
+        voices.forEach((v) => {
+          const opt = document.createElement("option");
+          opt.value = v.id;
+          opt.textContent = v.name;
+          select.appendChild(opt);
+        });
+        if (currentVal) select.value = currentVal;
+      }
 
       // Update voice grid
-      if (voices.length === 0) {
-        el.innerHTML = '<div class="empty-row">Chưa có giọng nói nào</div>';
-        return;
+      if (el) {
+        if (voices.length === 0) {
+          el.innerHTML = '<div class="empty-row">Chưa có giọng nói nào</div>';
+        } else {
+          el.innerHTML = voices.map(v => `
+            <div class="voice-card">
+              <div class="voice-name">${esc(v.name)}</div>
+              <div class="voice-transcript">${esc(v.transcript || "")}</div>
+              <div class="voice-actions">
+                <button class="btn btn-sm btn-ghost" onclick="playVoiceAudio(${v.id})">Nghe mẫu</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteVoice(${v.id})">Xóa</button>
+              </div>
+            </div>`).join("");
+        }
       }
-      el.innerHTML = voices
-        .map(
-          (v) => `
-        <div class="voice-card">
-          <div class="voice-name">${esc(v.name)}</div>
-          <div class="voice-transcript">${esc(v.transcript || "")}</div>
-          <div class="voice-actions">
-            <button class="btn btn-sm btn-ghost" onclick="playVoiceAudio(${v.id})">Nghe mẫu</button>
-            <button class="btn btn-sm btn-danger" onclick="deleteVoice(${v.id})">Xóa</button>
-          </div>
-        </div>`
-        )
-        .join("");
+
+      // Table view (admin dashboard)
+      const vtbody = document.getElementById("voiceTableBody");
+      if (vtbody) {
+        if (voices.length === 0) {
+          vtbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--faint)">Chưa có giọng nói</td></tr>';
+        } else {
+          vtbody.innerHTML = voices.map(v => `
+            <tr>
+              <td>${v.id}</td>
+              <td>${esc(v.name)}</td>
+              <td style="color:var(--muted);font-size:.85rem">${esc((v.transcript || "").slice(0, 60))}</td>
+              <td style="color:var(--faint);font-size:.8rem">${v.audio_path ? v.audio_path.split("\\").pop() : ''}</td>
+              <td><button class="btn btn-sm btn-ghost" onclick="playVoiceAudio(${v.id})">Play</button> <button class="btn btn-sm btn-danger" onclick="deleteVoice(${v.id})">Xóa</button></td>
+            </tr>`).join("");
+        }
+      }
     } catch (_) {}
   }
 
   // Voice form
-  $("#addVoiceForm").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const name = $("#voiceName").value.trim();
-    const transcript = $("#voiceTranscript").value.trim();
-    const file = $("#voiceAudio").files[0];
-    if (!name || !file) return;
-
-    const formData = new FormData();
-    formData.append("name", name);
-    formData.append("transcript", transcript);
-    formData.append("audio", file);
-
-    try {
-      await fetch(`${API}/api/voices/`, { method: "POST", body: formData });
-      addLog("success", `Đã thêm giọng nói: ${name}`);
-      $("#voiceName").value = "";
-      $("#voiceTranscript").value = "";
-      $("#voiceAudio").value = "";
-      refreshVoices();
-    } catch (exc) {
-      addLog("error", `Lỗi thêm giọng nói: ${exc.message}`);
-    }
-  });
+  const _voiceForm = $("#addVoiceForm");
+  if (_voiceForm) {
+    _voiceForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const name = $("#voiceName").value.trim();
+      const transcript = $("#voiceTranscript").value.trim();
+      const file = $("#voiceAudio").files[0];
+      if (!name || !file) return;
+      const formData = new FormData();
+      formData.append("name", name);
+      formData.append("transcript", transcript);
+      formData.append("audio", file);
+      try {
+        await fetch(`${API}/api/voices/`, { method: "POST", body: formData });
+        addLog("success", `Đã thêm giọng nói: ${name}`);
+        $("#voiceName").value = "";
+        $("#voiceTranscript").value = "";
+        $("#voiceAudio").value = "";
+        refreshVoices();
+      } catch (exc) {
+        addLog("error", `Lỗi thêm giọng nói: ${exc.message}`);
+      }
+    });
+  }
 
   // ── TTS Form ───────────────────────────────────────
-  $("#ttsForm").addEventListener("submit", async (e) => {
+  const _ttsForm = $("#ttsForm");
+  if (_ttsForm) {
+    _ttsForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     const text = $("#ttsText").value.trim();
     const voiceId = $("#ttsVoice").value;
@@ -431,9 +448,21 @@
 
       lastCreatedTaskId = result.id;
     } catch (_) {}
-  });
+    });
+  }
 
   // ── Global actions ─────────────────────────────────
+  window.addAccount = async function () {
+    const email = document.getElementById("newAccountEmail")?.value?.trim();
+    if (!email) { addLog("error", "Nhập email Google"); return; }
+    try {
+      await api("/api/accounts/add", { method: "POST", body: JSON.stringify({ email }) });
+      addLog("info", "Đã gửi yêu cầu thêm tài khoản. Cửa sổ Chrome sẽ mở ra.");
+      if (document.getElementById("newAccountEmail")) document.getElementById("newAccountEmail").value = "";
+      refreshAccounts();
+    } catch (_) {}
+  };
+
   window.startWorker = async function (id) {
     try {
       await api(`/api/accounts/${id}/start`, { method: "POST" });
