@@ -1,6 +1,6 @@
 @echo off
 echo ====================================
-echo   Colab Worker TTS Server
+echo   Clone TTS Server
 echo ====================================
 echo.
 
@@ -12,7 +12,15 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM Install dependencies if needed
+REM Check if Node.js is available for frontend
+node --version >nul 2>&1
+if errorlevel 1 (
+    echo WARNING: Node.js not found. Frontend will not start.
+    echo Install Node.js from https://nodejs.org/
+    echo.
+)
+
+REM Install Python dependencies if needed
 if not exist ".venv" (
     echo Creating virtual environment...
     python -m venv .venv
@@ -25,10 +33,34 @@ if not exist ".venv" (
     call .venv\Scripts\activate.bat
 )
 
-echo.
-echo Starting server on http://localhost:8001
-echo Dashboard: http://localhost:8001/
-echo.
-python run.py
+REM Install frontend dependencies if needed
+if exist "frontend\package.json" (
+    if not exist "frontend\node_modules" (
+        echo Installing frontend dependencies...
+        cd frontend
+        call npm install
+        cd ..
+    )
+)
 
+echo.
+echo Starting servers...
+echo   Backend API: http://localhost:8001
+echo   Frontend:    http://localhost:3000
+echo   Admin:       http://localhost:8001/admin/
+echo.
+
+REM Start backend in current window
+start "Clone TTS Backend" cmd /c "cd /d %CD% && .venv\Scripts\python run.py"
+
+REM Start frontend in new window (if Node.js available)
+if exist "frontend\node_modules" (
+    start "Clone TTS Frontend" cmd /c "cd /d %CD%\frontend && npm run dev"
+)
+
+echo Both servers starting in separate windows.
+echo.
+echo   Backend: http://localhost:8001
+echo   Frontend: http://localhost:3000
+echo.
 pause
