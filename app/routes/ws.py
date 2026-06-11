@@ -587,60 +587,12 @@ async def _maintenance_loop():
                             _safe_create_task(stop_expired_worker(em))
                             break
 
-        # 4. Periodic Google session check for all OFFLINE/ACTIVE accounts
-        if now.timestamp() - _last_session_check > SESSION_CHECK_INTERVAL:
-            _last_session_check = now.timestamp()
-            _safe_create_task(_check_all_account_sessions())
-
-
-async def _check_all_account_sessions():
-    """Check Google session cookies for all accounts every 30 minutes.
-
-    Runs headless Playwright check for each account's profile.
-    If a session has expired, marks the account NEEDS_LOGIN so auto-rotate
-    won't try to start it (wasting resources on a headed browser that
-    would just show a login page).
-    """
-    logger.info("Starting periodic Google session check for all accounts...")
-    async with async_session() as db:
-        result = await db.execute(
-            select(GoogleAccount).where(GoogleAccount.status.in_(["OFFLINE", "ACTIVE", "CONNECTING"]))
-        )
-        accounts = result.scalars().all()
-
-    if not accounts:
-        return
-
-    from playwright.async_api import async_playwright
-
-    for acc in accounts:
-        profile_dir = str(PROFILES_DIR / acc.email)
-        if not _Path(profile_dir).exists():
-            continue
-
-        try:
-            pw = await async_playwright().start()
-            ctx = await pw.chromium.launch_persistent_context(
-                user_data_dir=profile_dir,
-                headless=True,
-                args=["--no-sandbox", "--disable-setuid-sandbox"],
+        # 4. Periodic maintenance: reset stale COOLDOWN accounts
+        async with async_session() as db:
+            await db.execute(
+                update(GoogleAccount).where(
+                    GoogleAccount.status == "COOLDOWN",
+                    GoogleAccount.quota_reset_at <= now,
+                ).values(status="OFFLINE", quota_reset_at=None)
             )
-            cookies = await ctx.cookies("https://accounts.google.com")
-            await ctx.close()
-            await pw.stop()
-
-            names = {c.get("name") for c in cookies}
-            has_session = "SID" in names and ("SAPISID" in names or "HSID" in names)
-
-            if not has_session:
-                logger.warning("Session expired for %s — marking NEEDS_LOGIN", acc.email)
-                async with async_session() as db2:
-                    acc2 = await db2.get(GoogleAccount, acc.id)
-                    if acc2:
-                        acc2.status = "NEEDS_LOGIN"
-                        acc2.quota_reset_at = None
-                        await db2.commit()
-        except Exception as e:
-            logger.debug("Session check failed for %s: %s", acc.email, e)
-
-    logger.info("Periodic session check complete.")
+            await db.commit()

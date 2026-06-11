@@ -1054,25 +1054,10 @@ async def start_colab_worker(email: str, server_url: str) -> None:
     if not Path(profile_dir).exists():
         raise RuntimeError(f"No profile found for {email}. Login first.")
 
-    # Check Google session cookies before launching headed browser
-    # Brief headless check first — avoids flashing a headed window on stale session.
-    check_pw = await async_playwright().start()
-    try:
-        check_ctx = await check_pw.chromium.launch_persistent_context(
-            user_data_dir=profile_dir,
-            headless=True,
-            args=["--no-sandbox", "--disable-setuid-sandbox"],
-        )
-        has_session = await _check_google_session_for(email, check_ctx)
-        await check_ctx.close()
-        await check_pw.stop()
-        if not has_session:
-            raise RuntimeError(f"Google session expired for {email}. Needs re-login.")
-        logger.info("Google session valid for %s", email)
-    except RuntimeError:
-        raise
-    except Exception as e:
-        logger.warning("Session pre-check failed for %s (proceeding anyway): %s", email, e)
+    # Profile has persisted Chrome cookies from previous login.
+    # Trust that the profile is valid. If Google session actually expired,
+    # the Colab page will show "Sign in" and Playwright will handle it.
+    logger.info("Profile exists for %s, launching worker...", email)
 
     pw = await async_playwright().start()
     context = None
