@@ -9,7 +9,11 @@ import json
 import os
 import sys
 import time
+import logging
 from concurrent.futures import ThreadPoolExecutor
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger("worker")
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
@@ -23,9 +27,9 @@ SAMPLE_RATE = 24000
 REF_CACHE_DIR = Path("/tmp/omnivoice_refs")
 MODEL_ID = "k2-fsa/OmniVoice"
 TASK_QUEUE_MAXSIZE = 16
-OMNIVOICE_NUM_STEP = int(os.getenv("OMNIVOICE_NUM_STEP", "8"))
-OMNIVOICE_GUIDANCE_SCALE = float(os.getenv("OMNIVOICE_GUIDANCE_SCALE", "1.5"))
-_REF_MAX_RAW = float(os.getenv("REF_AUDIO_MAX_SECONDS", "5"))
+OMNIVOICE_NUM_STEP = int(os.getenv("OMNIVOICE_NUM_STEP", "12")) # Higher quality steps
+OMNIVOICE_GUIDANCE_SCALE = float(os.getenv("OMNIVOICE_GUIDANCE_SCALE", "2.0")) # Better voice guidance
+_REF_MAX_RAW = float(os.getenv("REF_AUDIO_MAX_SECONDS", "15")) # Increased to 15s for better clone quality
 REF_AUDIO_MAX_SECONDS = max(1.0, min(30.0, _REF_MAX_RAW))
 if REF_AUDIO_MAX_SECONDS != _REF_MAX_RAW:
     print(f"[ref] REF_AUDIO_MAX_SECONDS clamped to {REF_AUDIO_MAX_SECONDS:.1f}s (was {_REF_MAX_RAW})", flush=True)
@@ -151,6 +155,13 @@ def build_generate_kwargs(
         kwargs["num_step"] = OMNIVOICE_NUM_STEP
     elif "num_steps" in params:
         kwargs["num_steps"] = OMNIVOICE_NUM_STEP
+
+    # Disable internal preprocessing/trimming if model supports it,
+    # because the worker already handled trimming via prepare_ref_audio.
+    if "preprocess_prompt" in params:
+        kwargs["preprocess_prompt"] = False
+    elif "preprocess" in params:
+        kwargs["preprocess"] = False
 
     if "guidance_scale" in params:
         kwargs["guidance_scale"] = OMNIVOICE_GUIDANCE_SCALE
@@ -327,21 +338,26 @@ def run_tts(model: Any, text: str, ref_audio: str, ref_text: str | None = None, 
     params = getattr(model, "_omnivoice_generate_params", set())
     kwargs = build_generate_kwargs(params, text, ref_audio, ref_text=ref_text, language=language)
 
+    # OmniVoice specific: get prompt if supported
     voice_prompt = get_voice_clone_prompt(model, ref_audio, ref_text)
     if voice_prompt is not None and "voice_clone_prompt" in params:
-        for key in ("ref_audio", "reference_audio", "reference_wav", "prompt_audio", "ref_text", "reference_text", "prompt_text"):
-            kwargs.pop(key, None)
+        # DO NOT pop ref_audio/prompt_audio. OmniVoice needs them as context
+        # even when pre-encoded prompt is provided in some API versions.
         kwargs["voice_clone_prompt"] = voice_prompt
+        logger.info("[tts] using cached voice prompt")
 
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
 
+    # Ensure we are generating NEW audio, not returning the reference
+    print(f"🎤 Generating TTS: {len(text)} chars...", flush=True)
     with torch.inference_mode(), autocast_context():
         output = model.generate(**kwargs)
 
     if torch.cuda.is_available():
         torch.cuda.synchronize()
 
+    # Validation: if output is the same as input ref_audio path, something is wrong
     return _audio_to_wav_bytes(output)
 
 
@@ -496,7 +512,12 @@ async def worker_loop(model: Any, server_url: str, email: str) -> None:
                                     "error": "Worker queue full",
                                 })
                         elif action == "ping":
-                            await ws.send(json.dumps({"action": "pong"}))
+                            # Send standard pong + current worker status
+                            current_status = "IDLE" if task_queue.empty() else "BUSY"
+                            await ws.send(json.dumps({
+                                "action": "pong_status",
+                                "status": current_status
+                            }))
                         elif action == "shutdown":
                             print("[ws] Server yêu cầu shutdown.", flush=True)
                             if consumer_task:

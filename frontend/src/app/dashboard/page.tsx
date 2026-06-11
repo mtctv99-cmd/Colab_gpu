@@ -3,13 +3,18 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { HiArrowRight, HiMicrophone, HiKey, HiClock, HiTrash, HiPlus, HiCheck, HiExclamationTriangle } from "react-icons/hi2";
+import { HiArrowRight, HiMicrophone, HiKey, HiClock, HiTrash, HiPlus, HiCheck, HiCog6Tooth } from "react-icons/hi2";
+import { toast } from "sonner";
+import { motion, AnimatePresence } from "motion/react";
+
+import { api } from "@/lib/api";
 
 interface UserProfile {
   id: number;
   email: string;
   role: string;
   balance: number;
+  last_login_at?: string | null;
 }
 
 interface ApiKey {
@@ -34,35 +39,22 @@ interface Voice {
   name: string;
 }
 
-function useAuth() {
+function useUser() {
   const router = useRouter();
   const [user, setUser] = useState<UserProfile | null>(null);
-  const [token, setToken] = useState<string | null>(null);
 
   useEffect(() => {
     const t = localStorage.getItem("token");
     const u = localStorage.getItem("user");
     if (!t || !u) { router.push("/login"); return; }
-    setToken(t);
     setUser(JSON.parse(u));
   }, [router]);
 
-  const api = useCallback(async (path: string, opts: RequestInit = {}) => {
-    const res = await fetch(path, {
-      ...opts,
-      headers: { ...opts.headers, "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
-    });
-    if (res.status === 401) { localStorage.clear(); router.push("/login"); throw new Error("Session expired"); }
-    const data = await res.json().catch(() => null);
-    if (!res.ok) throw new Error(data?.message || data?.detail || `HTTP ${res.status}`);
-    return data;
-  }, [token, router]);
-
-  return { user, token, api, setUser };
+  return { user, setUser };
 }
 
 export default function DashboardPage() {
-  const { user, api, setUser } = useAuth();
+  const { user, setUser } = useUser();
   const router = useRouter();
   const [tab, setTab] = useState("overview");
   const [keys, setKeys] = useState<ApiKey[]>([]);
@@ -75,11 +67,15 @@ export default function DashboardPage() {
   const [ttsResult, setTtsResult] = useState<string | null>(null);
   const [newKeyName, setNewKeyName] = useState("");
   const [newKeyDisplay, setNewKeyDisplay] = useState<string | null>(null);
-  const [message, setMessage] = useState("");
+  const [showConfirm, setShowConfirm] = useState<number | null>(null);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [changingPassword, setChangingPassword] = useState(false);
 
   const loadKeys = useCallback(async () => {
     try { setKeys(await api("/api/auth/api-keys")); } catch {}
-  }, [api]);
+  }, []);
 
   const loadUsage = useCallback(async () => {
     try {
@@ -87,58 +83,88 @@ export default function DashboardPage() {
       setUsage(data.records || []);
       setTotalUsed(data.total_used || 0);
     } catch {}
-  }, [api]);
+  }, []);
 
   const loadVoices = useCallback(async () => {
     try { setVoices(await api("/api/voices/")); } catch {}
-  }, [api]);
+  }, []);
 
-  useEffect(() => { if (user) { loadKeys(); } }, [user, loadKeys]);
+  useEffect(() => {
+    if (user) {
+      loadKeys();
+      loadVoices();
+    }
+  }, [user, loadKeys, loadVoices]);
 
-  const createKey = async () => {
+  const createKey = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     try {
       const data = await api("/api/auth/api-keys", { method: "POST", body: JSON.stringify({ name: newKeyName || "Default" }) });
       setNewKeyDisplay(data.key);
       setNewKeyName("");
+      toast.success("Tạo API key thành công");
       loadKeys();
-    } catch (e: any) { setMessage(e.message); }
+    } catch (e: any) { toast.error(e.message); }
   };
 
   const deactivateKey = async (id: number) => {
-    if (!confirm("Deactivate this API key?")) return;
-    try { await api(`/api/auth/api-keys/${id}`, { method: "DELETE" }); loadKeys(); }
-    catch (e: any) { setMessage(e.message); }
+    try {
+      await api(`/api/auth/api-keys/${id}`, { method: "DELETE" });
+      toast.success("Đã xoá API key");
+      loadKeys();
+    } catch (e: any) { toast.error(e.message); }
   };
 
   const submitTts = async () => {
     if (!ttsText.trim() || !ttsVoice) return;
     setTtsLoading(true);
     setTtsResult(null);
-    setMessage("");
     try {
-      const res = await fetch("/api/tts/text", {
+      const blob = await api("/api/tts/text", {
         method: "POST",
-        headers: { "Authorization": `Bearer ${localStorage.getItem("token")}`, "Content-Type": "application/json" },
         body: JSON.stringify({ text: ttsText, voice_id: parseInt(ttsVoice) }),
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        if (res.status === 402) setMessage("Không đủ ký tự!");
-        else setMessage(err.message || err.detail || `HTTP ${res.status}`);
-        return;
-      }
-      const blob = await res.blob();
       setTtsResult(URL.createObjectURL(blob));
+      toast.success("Tạo giọng nói thành công");
       // Refresh profile for updated balance
       setUser(await api("/api/auth/profile"));
-    } catch (e: any) { setMessage(e.message); }
+    } catch (e: any) { toast.error(e.message); }
     finally { setTtsLoading(false); }
+  };
+
+  const changePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newPassword.length < 6) {
+      toast.error("Mật khẩu mới phải từ 6 ký tự");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toast.error("Mật khẩu nhập lại không khớp");
+      return;
+    }
+
+    setChangingPassword(true);
+    try {
+      await api("/api/auth/change-password", {
+        method: "POST",
+        body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+      });
+      toast.success("Đổi mật khẩu thành công");
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setChangingPassword(false);
+    }
   };
 
   const tabs = [
     { id: "overview", label: "Tổng quan", icon: HiMicrophone },
     { id: "keys", label: "API Keys", icon: HiKey },
     { id: "usage", label: "Lịch sử", icon: HiClock },
+    { id: "settings", label: "Cài đặt", icon: HiCog6Tooth },
   ];
 
   return (
@@ -186,14 +212,6 @@ export default function DashboardPage() {
           ))}
         </div>
 
-        {message && (
-          <div className="flex items-center gap-2 bg-red-950/50 border border-red-900 text-red-400 text-sm rounded-lg px-4 py-2.5 mb-4">
-            <HiExclamationTriangle className="w-4 h-4 shrink-0" />
-            {message}
-            <button onClick={() => setMessage("")} className="ml-auto text-red-600 hover:text-red-400">&times;</button>
-          </div>
-        )}
-
         {/* Overview */}
         {tab === "overview" && user && (
           <div className="space-y-6">
@@ -223,8 +241,9 @@ export default function DashboardPage() {
               <div className="space-y-3">
                 <select
                   value={ttsVoice}
+                  disabled={ttsLoading}
                   onChange={(e) => { setTtsVoice(e.target.value); loadVoices(); }}
-                  className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-sm text-white focus:outline-none focus:border-brand"
+                  className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-sm text-white focus:outline-none focus:border-brand disabled:opacity-50"
                 >
                   <option value="">Chọn giọng</option>
                   {voices.map((v) => (
@@ -233,10 +252,11 @@ export default function DashboardPage() {
                 </select>
                 <textarea
                   value={ttsText}
+                  disabled={ttsLoading}
                   onChange={(e) => setTtsText(e.target.value)}
                   placeholder="Nhập nội dung cần chuyển giọng nói..."
                   rows={4}
-                  className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-brand resize-vertical"
+                  className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-brand resize-vertical disabled:opacity-50"
                 />
                 <div className="flex items-center gap-3">
                   <button
@@ -265,17 +285,17 @@ export default function DashboardPage() {
         {/* API Keys */}
         {tab === "keys" && (
           <div className="space-y-4">
-            <div className="flex items-center gap-3">
+            <form onSubmit={createKey} className="flex items-center gap-3">
               <input
                 value={newKeyName}
                 onChange={(e) => setNewKeyName(e.target.value)}
                 placeholder="Tên key (vd: Production)"
                 className="flex-1 px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-lg text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-brand"
               />
-              <button onClick={createKey} className="inline-flex items-center gap-1.5 bg-brand text-black font-semibold px-4 py-2 rounded-lg hover:bg-emerald-400 transition-colors text-sm">
+              <button type="submit" className="inline-flex items-center gap-1.5 bg-brand text-black font-semibold px-4 py-2 rounded-lg hover:bg-emerald-400 transition-colors text-sm">
                 <HiPlus className="w-3.5 h-3.5" /> Tạo key
               </button>
-            </div>
+            </form>
 
             {newKeyDisplay && (
               <div className="rounded-lg border border-brand/30 bg-brand/5 p-4">
@@ -290,8 +310,8 @@ export default function DashboardPage() {
               </div>
             )}
 
-            <div className="rounded-xl border border-zinc-800 overflow-hidden">
-              <table className="w-full text-sm">
+            <div className="rounded-xl border border-zinc-800 overflow-x-auto">
+              <table className="w-full text-sm min-w-[500px]">
                 <thead>
                   <tr className="border-b border-zinc-800 bg-zinc-900/50">
                     <th className="text-left px-4 py-3 text-zinc-500 font-medium">Tên</th>
@@ -315,7 +335,7 @@ export default function DashboardPage() {
                         </td>
                         <td className="px-4 py-3 text-right">
                           {k.is_active && (
-                            <button onClick={() => deactivateKey(k.id)} className="text-zinc-500 hover:text-red-400 transition-colors">
+                            <button onClick={() => setShowConfirm(k.id)} className="text-zinc-500 hover:text-red-400 transition-colors">
                               <HiTrash className="w-4 h-4" />
                             </button>
                           )}
@@ -326,6 +346,43 @@ export default function DashboardPage() {
                 </tbody>
               </table>
             </div>
+
+            <AnimatePresence>
+              {showConfirm !== null && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+                  onClick={() => setShowConfirm(null)}
+                >
+                  <motion.div
+                    initial={{ scale: 0.9, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    exit={{ scale: 0.9, opacity: 0 }}
+                    onClick={(e) => e.stopPropagation()}
+                    className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 max-w-sm w-full mx-4"
+                  >
+                    <h3 className="font-semibold text-sm mb-2">Xác nhận xoá</h3>
+                    <p className="text-sm text-zinc-400 mb-5">Bạn có chắc muốn xoá API key này? Hành động này không thể hoàn tác.</p>
+                    <div className="flex gap-3 justify-end">
+                      <button
+                        onClick={() => setShowConfirm(null)}
+                        className="px-4 py-2 text-sm text-zinc-400 hover:text-white transition-colors"
+                      >
+                        Huỷ
+                      </button>
+                      <button
+                        onClick={() => { const id = showConfirm; setShowConfirm(null); deactivateKey(id); }}
+                        className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-500 transition-colors"
+                      >
+                        Xoá
+                      </button>
+                    </div>
+                  </motion.div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         )}
 
@@ -358,6 +415,98 @@ export default function DashboardPage() {
                 )}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* Settings */}
+        {tab === "settings" && user && (
+          <div className="space-y-6">
+            {/* User info */}
+            <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-6">
+              <h3 className="font-semibold text-sm mb-4 flex items-center gap-2">
+                <HiCog6Tooth className="w-4 h-4 text-brand" />
+                Thông tin tài khoản
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <p className="text-xs text-zinc-500">ID</p>
+                  <p className="text-sm">{user.id}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-zinc-500">Email</p>
+                  <p className="text-sm">{user.email}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-zinc-500">Vai trò</p>
+                  <p className="text-sm capitalize">{user.role}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-zinc-500">Số dư ký tự</p>
+                  <p className="text-sm">{user.balance.toLocaleString()}</p>
+                </div>
+                <div className="sm:col-span-2">
+                  <p className="text-xs text-zinc-500">Lần cuối đăng nhập</p>
+                  <p className="text-sm">
+                    {user.last_login_at
+                      ? new Date(user.last_login_at).toLocaleString("vi-VN", {
+                          year: "numeric", month: "2-digit", day: "2-digit",
+                          hour: "2-digit", minute: "2-digit",
+                        })
+                      : "Chưa có dữ liệu"}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Change password form */}
+            <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-6">
+              <h3 className="font-semibold text-sm mb-4 flex items-center gap-2">
+                <HiCog6Tooth className="w-4 h-4 text-brand" />
+                Đổi mật khẩu
+              </h3>
+              <form onSubmit={changePassword} className="space-y-3 max-w-sm">
+                <input
+                  type="password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  placeholder="Mật khẩu cũ"
+                  required
+                  disabled={changingPassword}
+                  className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-brand disabled:opacity-50"
+                />
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Mật khẩu mới"
+                  required
+                  disabled={changingPassword}
+                  minLength={6}
+                  className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-brand disabled:opacity-50"
+                />
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Nhập lại mật khẩu mới"
+                  required
+                  disabled={changingPassword}
+                  minLength={6}
+                  className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-brand disabled:opacity-50"
+                />
+                <button
+                  type="submit"
+                  disabled={changingPassword || !currentPassword || !newPassword || !confirmPassword}
+                  className="inline-flex items-center gap-2 bg-brand text-black font-semibold px-5 py-2 rounded-lg hover:bg-emerald-400 transition-colors text-sm disabled:opacity-50"
+                >
+                  {changingPassword ? (
+                    <span className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
+                  ) : (
+                    "Đổi mật khẩu"
+                  )}
+                </button>
+              </form>
+            </div>
           </div>
         )}
       </div>

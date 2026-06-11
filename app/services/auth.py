@@ -10,7 +10,10 @@ from datetime import datetime, timedelta, timezone
 from jose import JWTError, jwt
 from app.models.user import UsageRecord
 
-_SECRET_KEY = os.getenv("JWT_SECRET_KEY", secrets.token_hex(32))
+_jwt_secret = os.getenv("JWT_SECRET_KEY")
+if not _jwt_secret:
+    raise ValueError("JWT_SECRET_KEY must be set in .env")
+_SECRET_KEY = _jwt_secret
 _ALGORITHM = "HS256"
 _ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 

@@ -15,6 +15,7 @@ class User(Base):
     role = Column(String, nullable=False, default="user")  # "user" | "admin"
     balance = Column(BigInteger, nullable=False, default=0)  # prepaid characters
     is_active = Column(Boolean, nullable=False, default=True)
+    last_login_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 

@@ -4,34 +4,29 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { HiArrowRight } from "react-icons/hi2";
+import { api } from "@/lib/api";
+import { toast } from "sonner";
 
 export default function SignupPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
     setLoading(true);
     try {
-      const r = await fetch("/api/auth/signup", {
+      const data = await api("/api/auth/signup", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
-      const data = await r.json();
-      if (!r.ok) {
-        setError(data.message || data.detail || "Đăng ký thất bại");
-        return;
-      }
       localStorage.setItem("token", data.token);
       localStorage.setItem("user", JSON.stringify(data.user));
-      router.push("/dashboard");
-    } catch {
-      setError("Lỗi kết nối đến server");
+      toast.success("Đăng ký thành công");
+      router.push(data.user.role === "admin" ? "/admin" : "/dashboard");
+    } catch (e: any) {
+      toast.error(e.message);
     } finally {
       setLoading(false);
     }
@@ -44,12 +39,6 @@ export default function SignupPage() {
           clone<span className="text-brand">.</span>tts
         </Link>
         <p className="text-center text-zinc-500 text-sm mb-8">Tạo tài khoản mới</p>
-
-        {error && (
-          <div className="bg-red-950/50 border border-red-900 text-red-400 text-sm rounded-lg px-4 py-2.5 mb-4">
-            {error}
-          </div>
-        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>

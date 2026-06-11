@@ -26,6 +26,7 @@ class AddAccountRequest(BaseModel):
 
 
 # ── List accounts ──────────────────────────────────────────────
+@router.get("")
 @router.get("/")
 async def list_accounts(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(GoogleAccount))
@@ -37,6 +38,7 @@ async def list_accounts(db: AsyncSession = Depends(get_db)):
             "profile_name": a.profile_name,
             "status": a.status,
             "last_active": a.last_active.isoformat() if a.last_active else None,
+            "started_at": a.started_at.isoformat() if a.started_at else None,
             "quota_reset_at": a.quota_reset_at.isoformat() if a.quota_reset_at else None,
         }
         for a in accounts
@@ -66,7 +68,8 @@ async def add_account(req: AddAccountRequest, db: AsyncSession = Depends(get_db)
     except Exception as exc:
         account.status = "OFFLINE"
         await db.commit()
-        raise HTTPException(status_code=500, detail=str(exc))
+        logger.error("Failed to add account %s: %s", req.email, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
     return {"id": account.id, "email": account.email, "status": account.status}
 
@@ -96,6 +99,7 @@ async def start_worker(account_id: int, request: Request, db: AsyncSession = Dep
 
     account.status = "ACTIVE"
     account.last_active = datetime.now(timezone.utc)
+    account.started_at = datetime.now(timezone.utc)
     await db.commit()
 
     # Determine server URL: config.SERVER_URL is preferred if it has been updated from default localhost,
@@ -148,6 +152,27 @@ async def delete_account(account_id: int, db: AsyncSession = Depends(get_db)):
     return {"detail": "Deleted"}
 
 
+# ── Re-login (open browser for NEEDS_LOGIN) ────────────────────
+@router.post("/{account_id}/relogin")
+async def relogin_account(account_id: int, db: AsyncSession = Depends(get_db)):
+    account = await db.get(GoogleAccount, account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found.")
+
+    account.status = "CONNECTING"
+    await db.commit()
+
+    try:
+        await play_runner.add_google_account_session(account.email)
+    except Exception as exc:
+        account.status = "NEEDS_LOGIN"
+        await db.commit()
+        logger.error("Relogin failed for account %s: %s", account.email, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+    return {"id": account.id, "email": account.email, "status": "CONNECTING"}
+
+
 # ── Debug screenshot ──────────────────────────────────────────
 @router.get("/{account_id}/screenshot")
 async def get_worker_screenshot(account_id: int, db: AsyncSession = Depends(get_db)):
@@ -166,4 +191,5 @@ async def get_worker_screenshot(account_id: int, db: AsyncSession = Depends(get_
         await page.screenshot(path=str(path))
         return FileResponse(str(path))
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to capture screenshot: {exc}")
+        logger.error("Failed to capture screenshot for %s: %s", account.email, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")

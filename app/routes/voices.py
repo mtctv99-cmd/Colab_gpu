@@ -28,6 +28,7 @@ router = APIRouter(prefix="/api/voices", tags=["voices"])
 
 
 # ── List voices ───────────────────────────────────────────────
+@router.get("")
 @router.get("/")
 async def list_voices(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Voice))

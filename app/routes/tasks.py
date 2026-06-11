@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models import Task, Voice
 from app.config import DATA_DIR
-from app.routes.ws import manager, _pending_direct_events
+from app.routes.ws import manager, _pending_direct_events, _safe_create_task
 from app.routes.auth import require_admin
 
 import unicodedata
@@ -40,6 +40,7 @@ class CreateTaskRequest(BaseModel):
 
 
 # ── List tasks ────────────────────────────────────────────────
+@router.get("")
 @router.get("/")
 async def list_tasks(limit: int = 20, _admin=Depends(require_admin), db: AsyncSession = Depends(get_db)):
     result = await db.execute(
@@ -92,16 +93,16 @@ async def create_task(req: CreateTaskRequest, _admin=Depends(require_admin), db:
             from app.routes.ws import _try_auto_rotate, _rotate_lock, _has_starting_or_active_account
             if not _rotate_lock.locked() and not await _has_starting_or_active_account():
                 logger.info("No active workers online. Starting one eligible worker...")
-                asyncio.create_task(_try_auto_rotate())
+                _safe_create_task(_try_auto_rotate())
             else:
                 logger.info("Worker/browser already starting; skip opening another browser.")
         else:
             from app.routes.ws import _maybe_scale_up
-            asyncio.create_task(_maybe_scale_up())
+            _safe_create_task(_maybe_scale_up())
 
     await manager.broadcast_status({"event": "task_created", "task_id": task.id})
     from app.routes.ws import _maybe_scale_up
-    asyncio.create_task(_maybe_scale_up())
+    _safe_create_task(_maybe_scale_up())
     return {
         "id": task.id,
         "status": task.status,
@@ -176,7 +177,7 @@ async def complete_task(task_id: str, audio: UploadFile = File(...), db: AsyncSe
 
     await manager.broadcast_status({"event": "task_completed", "task_id": task_id})
     if task.batch_id and task.webhook_url:
-        asyncio.create_task(_fire_webhook_if_batch_complete(task.batch_id, task.webhook_url))
+        _safe_create_task(_fire_webhook_if_batch_complete(task.batch_id, task.webhook_url))
 
     return {"status": "COMPLETED"}
 
@@ -223,6 +224,33 @@ async def _fire_webhook_if_batch_complete(batch_id: str, webhook_url: str) -> No
         logger.info("Webhook fired for batch %s -> %s", batch_id, webhook_url)
     except Exception as exc:
         logger.warning("Webhook failed for batch %s -> %s: %s", batch_id, webhook_url, exc)
+
+
+@router.post("/{task_id}/retry")
+async def retry_task(task_id: str, _admin=Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    task = await db.get(Task, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found.")
+
+    if task.status != "FAILED":
+        raise HTTPException(status_code=400, detail="Only failed tasks can be retried.")
+
+    task.status = "PENDING"
+    task.error_message = None
+    task.completed_at = None
+    task.worker_id = None
+    await db.commit()
+
+    # Try to dispatch immediately if there is an idle worker
+    from app.routes.ws import _maybe_scale_up
+    idle_email = manager.get_idle_worker()
+    if idle_email:
+        await _dispatch_task(task, idle_email, db)
+    else:
+        _safe_create_task(_maybe_scale_up())
+
+    await manager.broadcast_status({"event": "task_created", "task_id": task.id})
+    return {"id": task.id, "status": "PENDING"}
 
 
 # ── Internal helper ───────────────────────────────────────────

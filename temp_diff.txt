@@ -1,0 +1,1843 @@
+diff --git a/app/automation/play_runner.py b/app/automation/play_runner.py
+index 1f0aee4..f584911 100644
+--- a/app/automation/play_runner.py
++++ b/app/automation/play_runner.py
+@@ -17,8 +17,9 @@ from datetime import timedelta
+ 
+ logger = logging.getLogger(__name__)
+ 
+-CELL_START_TIMEOUT_SECONDS = 30
+-CELL_START_BACKOFF_MINUTES = 15
++CELL_START_TIMEOUT_SECONDS = 90
++CELL_START_BACKOFF_MINUTES = 10
++LOGIN_WATCH_TIMEOUT_SECONDS = 300
+ 
+ 
+ # JS utilities for Playwright automation - injected via add_init_script
+@@ -118,23 +119,72 @@ ROLE_WORKER = "worker"
+ ROLE_LOGIN = "login"
+ _active_pages: dict[str, Page] = {}
+ _keepalive_tasks: dict[str, asyncio.Task] = {}
++_login_watchers: dict[str, asyncio.Task] = {}
+ 
+ 
+ async def cleanup_zombie_browsers(kill_active: bool = False) -> int:
+     """Kill Chromium/Chrome processes launched with this app's profile directory.
+ 
+     If kill_active is False, keep currently tracked worker profile processes alive.
++    Supports Windows (PowerShell) and Linux (pgrep+kill).
+     """
+-    profiles_base = str(PROFILES_DIR).lower()
++    profiles_base = str(PROFILES_DIR)
+     active_profiles = {
+-        str(PROFILES_DIR / email).lower()
++        str(PROFILES_DIR / email)
+         for email in _active_contexts.keys()
+     }
+     killed = 0
+ 
+-    if not sys.platform.startswith("win"):
+-        return killed
++    if sys.platform.startswith("win"):
++        return await _cleanup_zombies_win(profiles_base, active_profiles, kill_active)
++    else:
++        return await _cleanup_zombies_linux(profiles_base, active_profiles, kill_active)
+ 
++
++async def _cleanup_zombies_linux(profiles_base: str, active_profiles: set[str], kill_active: bool) -> int:
++    """Linux zombie cleanup via pgrep + /proc reading."""
++    killed = 0
++    try:
++        # Find all chrome/chromium processes with --colab-role flag
++        proc = await asyncio.create_subprocess_exec(
++            "pgrep", "-f", "chrom(e|ium).*--colab-role",
++            stdout=asyncio.subprocess.PIPE,
++            stderr=asyncio.subprocess.DEVNULL,
++        )
++        stdout, _ = await proc.communicate()
++        if proc.returncode != 0:
++            return killed
++
++        pids = [p.strip() for p in stdout.decode().splitlines() if p.strip()]
++        for pid_str in pids:
++            try:
++                pid = int(pid_str)
++                # Read cmdline to check profile path
++                try:
++                    with open(f"/proc/{pid}/cmdline", "r", errors="ignore") as f:
++                        cmdline = f.read().replace("\0", " ")
++                except (FileNotFoundError, PermissionError):
++                    continue
++
++                cmd_lower = cmdline.lower()
++                if profiles_base.lower() not in cmd_lower:
++                    continue
++                if not kill_active and any(p.lower() in cmd_lower for p in active_profiles):
++                    continue
++
++                os.kill(pid, 9)
++                killed += 1
++                logger.info("Killed zombie browser PID=%s (Linux)", pid)
++            except (ValueError, OSError):
++                continue
++    except FileNotFoundError:
++        logger.debug("pgrep not found, skipping zombie cleanup")
++    except Exception as exc:
++        logger.warning("cleanup_zombies_linux failed: %s", exc)
++    return killed
++
++
++async def _cleanup_zombies_win(profiles_base: str, active_profiles: set[str], kill_active: bool) -> int:
+     try:
+         proc = await asyncio.create_subprocess_exec(
+             "powershell",
+@@ -178,7 +228,7 @@ async def cleanup_zombie_browsers(kill_active: bool = False) -> int:
+             killed += 1
+             logger.info("Killed zombie browser process PID=%s", pid)
+     except Exception as exc:
+-        logger.warning("cleanup_zombie_browsers failed: %s", exc)
++        logger.warning("cleanup_zombies_win failed: %s", exc)
+ 
+     return killed
+ 
+@@ -981,12 +1031,49 @@ async def _trigger_run_all(page, email) -> bool:
+     return False
+ 
+ 
++async def _check_google_session_for(email: str, ctx: BrowserContext) -> bool:
++    """Check whether Google session cookies exist for this account's profile.
++
++    Returns True if valid Google session cookies (SID/SAPISID) are present.
++    """
++    try:
++        cookies = await ctx.cookies("https://accounts.google.com")
++        names = {c.get("name") for c in cookies}
++        has_session = "SID" in names and ("SAPISID" in names or "HSID" in names)
++        if not has_session:
++            logger.warning("No valid Google session found in profile for %s", email)
++        return has_session
++    except Exception as e:
++        logger.debug("Session check failed for %s: %s", email, e)
++        return False
++
++
+ async def start_colab_worker(email: str, server_url: str) -> None:
+     """Start a Colab worker: open the notebook, select GPU T4, fill configuration, run-all, and keep-alive."""
+     profile_dir = str(PROFILES_DIR / email)
+     if not Path(profile_dir).exists():
+         raise RuntimeError(f"No profile found for {email}. Login first.")
+ 
++    # Check Google session cookies before launching headed browser
++    # Brief headless check first — avoids flashing a headed window on stale session.
++    check_pw = await async_playwright().start()
++    try:
++        check_ctx = await check_pw.chromium.launch_persistent_context(
++            user_data_dir=profile_dir,
++            headless=True,
++            args=["--no-sandbox", "--disable-setuid-sandbox"],
++        )
++        has_session = await _check_google_session_for(email, check_ctx)
++        await check_ctx.close()
++        await check_pw.stop()
++        if not has_session:
++            raise RuntimeError(f"Google session expired for {email}. Needs re-login.")
++        logger.info("Google session valid for %s", email)
++    except RuntimeError:
++        raise
++    except Exception as e:
++        logger.warning("Session pre-check failed for %s (proceeding anyway): %s", email, e)
++
+     pw = await async_playwright().start()
+     context = None
+     try:
+@@ -1112,11 +1199,15 @@ async def start_colab_worker(email: str, server_url: str) -> None:
+                         runAnyway.click();
+                         console.log('[Antigravity-KeepAlive] Dismissed Run anyway dialog');
+                     }
+-                    const okBtn = document.querySelector('paper-button#ok, colab-dialog paper-button, md-filled-button[id*="ok"]');
++                    const okBtn = document.querySelector('paper-button#ok, colab-dialog paper-button, md-filled-button[id*="ok"], md-text-button[id*="ok"]');
+                     if (okBtn) {
+                         okBtn.click();
+                         console.log('[Antigravity-KeepAlive] Dismissed alert dialog');
+                     }
++                    // Additional check for "Reconnect" button which sometimes appears
++                    const reconnectBtn = Array.from(document.querySelectorAll('paper-button, md-text-button'))
++                        .find(el => (el.innerText || '').includes('Reconnect'));
++                    if (reconnectBtn) reconnectBtn.click();
+                 }, 30000);
+             }""")
+             logger.info("Keep-Alive JS injected successfully for %s", email)
+diff --git a/app/main.py b/app/main.py
+index 81dc613..e1f76c7 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -34,10 +34,13 @@ async def _start_cloudflare_tunnel():
+             stdout=asyncio.subprocess.PIPE,
+             stderr=asyncio.subprocess.STDOUT,
+         )
+-        
++
+         # Read the tunnel URL asynchronously from stdout
+-        async for line in _tunnel_process.stdout:  # type: ignore[union-attr]
+-            line_str = line.decode().strip()
++        while True:
++            line_bytes = await _tunnel_process.stdout.readline()
++            if not line_bytes:
++                break
++            line_str = line_bytes.decode(errors="ignore").strip()
+             if "trycloudflare.com" in line_str:
+                 # Find the URL containing trycloudflare.com
+                 for word in line_str.split():
+@@ -101,8 +104,8 @@ async def lifespan(app: FastAPI):
+     # Auto-pickup: Start a worker immediately if enabled
+     from app.config import AUTO_PICKUP_ENABLED
+     if AUTO_PICKUP_ENABLED:
+-        logger.info("Auto-pickup enabled. Starting initial worker...")
+-        asyncio.create_task(_try_auto_rotate())
++        logger.info("Auto-pickup enabled. Waiting for Cloudflare tunnel before starting initial worker...")
++        asyncio.create_task(_delayed_auto_pickup())
+ 
+     yield
+ 
+@@ -113,18 +116,43 @@ async def lifespan(app: FastAPI):
+     logger.info("Server shutting down.")
+ 
+ 
++async def _delayed_auto_pickup():
++    """Delay auto-pickup until Cloudflare tunnel is ready (max 120s)."""
++    from app.config import SERVER_URL, CLOUDFLARED_ENABLED
++    for i in range(24):
++        if not CLOUDFLARED_ENABLED:
++            break
++        if "localhost" not in SERVER_URL and "127.0.0.1" not in SERVER_URL:
++            logger.info("Cloudflare tunnel ready: %s", SERVER_URL)
++            break
++        await asyncio.sleep(5)
++    else:
++        logger.warning("Cloudflare tunnel not ready after 120s, proceeding with %s", SERVER_URL)
++    from app.routes.ws import _try_auto_rotate
++    await _try_auto_rotate()
++
++
+ 
+ app = FastAPI(title="Clone TTS", version="1.0.0", lifespan=lifespan)
+ 
+ app.add_middleware(
+     CORSMiddleware,
+-    allow_origins=["*"],
++    allow_origin_regex=r"http://localhost:.*",
+     allow_credentials=True,
+     allow_methods=["*"],
+     allow_headers=["*"],
+ )
+ 
+ 
++@app.middleware("http")
++async def add_csp_header(request: Request, call_next):
++    response = await call_next(request)
++    csp = "script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
++    if response.headers.get("content-type", "").startswith("text/html"):
++        response.headers["Content-Security-Policy"] = csp
++    return response
++
++
+ @app.middleware("http")
+ async def no_cache_html(request: Request, call_next):
+     response = await call_next(request)
+@@ -178,19 +206,7 @@ async def get_config():
+     return {"google_client_id": GOOGLE_CLIENT_ID}
+ 
+ 
+-# HTML page routes (extension-less fallback to .html)
+-from pathlib import Path as _Path
+-from fastapi.responses import FileResponse
+-
+-_HTML_DIR = STATIC_DIR
+-_PAGE_FILES = {"/login": "login.html", "/signup": "signup.html", "/dashboard": "dashboard.html"}
+-
+-for _route, _file in _PAGE_FILES.items():
+-    _path_obj = _HTML_DIR / _file
+-    if _path_obj.exists():
+-        app.add_api_route(_route, lambda f=_path_obj: FileResponse(str(f), headers={"Cache-Control": "no-cache, no-store, must-revalidate"}), methods=["GET"], include_in_schema=False)
+-
+-# Serve static files (admin dashboard at /admin/, landing at /)
++# Serve static files (admin dashboard at /admin/)
+ app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
+ 
+ 
+diff --git a/app/routes/accounts.py b/app/routes/accounts.py
+index fcdcebd..473b50e 100644
+--- a/app/routes/accounts.py
++++ b/app/routes/accounts.py
+@@ -26,6 +26,7 @@ class AddAccountRequest(BaseModel):
+ 
+ 
+ # ── List accounts ──────────────────────────────────────────────
++@router.get("")
+ @router.get("/")
+ async def list_accounts(db: AsyncSession = Depends(get_db)):
+     result = await db.execute(select(GoogleAccount))
+@@ -66,7 +67,8 @@ async def add_account(req: AddAccountRequest, db: AsyncSession = Depends(get_db)
+     except Exception as exc:
+         account.status = "OFFLINE"
+         await db.commit()
+-        raise HTTPException(status_code=500, detail=str(exc))
++        logger.error("Failed to add account %s: %s", req.email, exc, exc_info=True)
++        raise HTTPException(status_code=500, detail="Internal server error")
+ 
+     return {"id": account.id, "email": account.email, "status": account.status}
+ 
+@@ -148,6 +150,27 @@ async def delete_account(account_id: int, db: AsyncSession = Depends(get_db)):
+     return {"detail": "Deleted"}
+ 
+ 
++# ── Re-login (open browser for NEEDS_LOGIN) ────────────────────
++@router.post("/{account_id}/relogin")
++async def relogin_account(account_id: int, db: AsyncSession = Depends(get_db)):
++    account = await db.get(GoogleAccount, account_id)
++    if not account:
++        raise HTTPException(status_code=404, detail="Account not found.")
++
++    account.status = "CONNECTING"
++    await db.commit()
++
++    try:
++        await play_runner.add_google_account_session(account.email)
++    except Exception as exc:
++        account.status = "NEEDS_LOGIN"
++        await db.commit()
++        logger.error("Relogin failed for account %s: %s", account.email, exc, exc_info=True)
++        raise HTTPException(status_code=500, detail="Internal server error")
++
++    return {"id": account.id, "email": account.email, "status": "CONNECTING"}
++
++
+ # ── Debug screenshot ──────────────────────────────────────────
+ @router.get("/{account_id}/screenshot")
+ async def get_worker_screenshot(account_id: int, db: AsyncSession = Depends(get_db)):
+@@ -166,4 +189,5 @@ async def get_worker_screenshot(account_id: int, db: AsyncSession = Depends(get_
+         await page.screenshot(path=str(path))
+         return FileResponse(str(path))
+     except Exception as exc:
+-        raise HTTPException(status_code=500, detail=f"Failed to capture screenshot: {exc}")
++        logger.error("Failed to capture screenshot for %s: %s", account.email, exc, exc_info=True)
++        raise HTTPException(status_code=500, detail="Internal server error")
+diff --git a/app/routes/auth.py b/app/routes/auth.py
+index ef5e688..e284e4a 100644
+--- a/app/routes/auth.py
++++ b/app/routes/auth.py
+@@ -2,6 +2,7 @@
+ import logging
+ 
+ from fastapi import APIRouter, Depends, HTTPException, Header
++from fastapi.responses import JSONResponse
+ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+ from pydantic import BaseModel, EmailStr
+ from sqlalchemy import select
+@@ -112,6 +113,7 @@ def _check_login_rate(email: str):
+     attempts = _login_attempts.get(email, [])
+     attempts = [t for t in attempts if now - t < _LOGIN_WINDOW_SECONDS]
+     if len(attempts) >= _LOGIN_MAX_ATTEMPTS:
++        logger.warning("Brute force attempt detected for %s (%d failures)", email, len(attempts))
+         raise HTTPException(status_code=429, detail="Too many login attempts. Try again in 5 minutes.")
+     attempts.append(now)
+     _login_attempts[email] = attempts
+@@ -132,7 +134,12 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
+ 
+     _clear_login_rate(req.email)
+     token = create_access_token({"user_id": user.id, "role": user.role})
+-    return {"token": token, "user": {"id": user.id, "email": user.email, "role": user.role, "balance": user.balance}}
++
++    remaining = max(0, _LOGIN_MAX_ATTEMPTS - len(_login_attempts.get(req.email, [])))
++    return JSONResponse(
++        content={"token": token, "user": {"id": user.id, "email": user.email, "role": user.role, "balance": user.balance}},
++        headers={"X-RateLimit-Remaining": str(remaining)},
++    )
+ 
+ 
+ # ── Change password ───────────────────────────────────────────
+@@ -215,28 +222,108 @@ async def admin_topup(req: AdminTopupRequest, admin: User = Depends(require_admi
+     return {"email": user.email, "new_balance": user.balance, "added": req.amount}
+ 
+ 
+-# ── Webhook: auto top-up (payment callback) ────────────────────
+-class WebhookTopupRequest(BaseModel):
++# ── Admin: create user ─────────────────────────────────────────
++class CreateUserRequest(BaseModel):
+     email: str
+-    amount: int
+-    secret: str = ""
+-
+-@router.post("/webhook/topup")
+-async def webhook_topup(req: WebhookTopupRequest, db: AsyncSession = Depends(get_db)):
+-    import os
+-    webhook_secret = os.getenv("WEBHOOK_SECRET", "")
+-    if webhook_secret and req.secret != webhook_secret:
+-        raise HTTPException(status_code=401, detail="Invalid secret")
+-    if req.amount <= 0:
+-        raise HTTPException(status_code=400, detail="Amount must be positive")
+-    result = await db.execute(select(User).where(User.email == req.email))
+-    user = result.scalar_one_or_none()
++    password: str
++    role: str = "user"
++
++@router.post("/admin/users")
++async def admin_create_user(req: CreateUserRequest, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
++    if len(req.password) < 6:
++        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
++    existing = await db.execute(select(User).where(User.email == req.email))
++    if existing.scalar_one_or_none():
++        raise HTTPException(status_code=400, detail="Email already registered")
++    user = User(email=req.email, password_hash=hash_password(req.password), role=req.role)
++    db.add(user)
++    await db.commit()
++    await db.refresh(user)
++    return {"id": user.id, "email": user.email, "role": user.role, "balance": user.balance}
++
++
++# ── Admin: delete user ─────────────────────────────────────────
++@router.delete("/admin/users/{user_id}")
++async def admin_delete_user(user_id: int, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
++    if admin.id == user_id:
++        raise HTTPException(status_code=400, detail="Cannot delete yourself")
++    user = await db.get(User, user_id)
+     if not user:
+         raise HTTPException(status_code=404, detail="User not found")
+-    user.balance += req.amount
++    await db.delete(user)
+     await db.commit()
+-    await db.refresh(user)
+-    return {"email": user.email, "new_balance": user.balance, "added": req.amount}
++    return {"detail": "Deleted"}
++
++
++# ── Admin: update user ─────────────────────────────────────────
++class UpdateUserRequest(BaseModel):
++    balance: int | None = None
++    role: str | None = None
++    is_active: bool | None = None
++
++@router.put("/admin/users/{user_id}")
++async def admin_update_user(user_id: int, req: UpdateUserRequest, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
++    user = await db.get(User, user_id)
++    if not user:
++        raise HTTPException(status_code=404, detail="User not found")
++    if req.balance is not None:
++        user.balance = req.balance
++    if req.role is not None:
++        user.role = req.role
++    if req.is_active is not None:
++        user.is_active = req.is_active
++    await db.commit()
++    return {"id": user.id, "email": user.email, "role": user.role, "balance": user.balance, "is_active": user.is_active}
++
++
++# ── Admin: list all API keys ────────────────────────────────────
++@router.get("/admin/api-keys")
++async def admin_list_api_keys(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
++    result = await db.execute(
++        select(ApiKey, User.email).join(User, ApiKey.user_id == User.id).order_by(ApiKey.created_at.desc())
++    )
++    return [
++        {
++            "id": k.ApiKey.id,
++            "key_prefix": k.ApiKey.key_prefix,
++            "name": k.ApiKey.name,
++            "is_active": k.ApiKey.is_active,
++            "user_id": k.ApiKey.user_id,
++            "user_email": k.email,
++            "created_at": k.ApiKey.created_at.isoformat() if k.ApiKey.created_at else None,
++            "last_used_at": k.ApiKey.last_used_at.isoformat() if k.ApiKey.last_used_at else None,
++        }
++        for k in result.all()
++    ]
++
++
++# ── Admin: create API key for any user ─────────────────────────
++class AdminCreateApiKeyRequest(BaseModel):
++    user_id: int
++    name: str = "Default"
++
++@router.post("/admin/api-keys")
++async def admin_create_api_key(req: AdminCreateApiKeyRequest, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
++    user = await db.get(User, req.user_id)
++    if not user:
++        raise HTTPException(status_code=404, detail="User not found")
++    raw, prefix, hashed = generate_api_key()
++    ak = ApiKey(user_id=req.user_id, key_prefix=prefix, key_hash=hashed, name=req.name)
++    db.add(ak)
++    await db.commit()
++    return {"key": raw, "key_prefix": prefix, "name": req.name, "user_email": user.email, "message": "Save the key now — it won't be shown again"}
++
++
++# ── Admin: hard delete API key ──────────────────────────────────
++@router.delete("/admin/api-keys/{key_id}")
++async def admin_delete_api_key(key_id: int, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
++    result = await db.execute(select(ApiKey).where(ApiKey.id == key_id))
++    ak = result.scalar_one_or_none()
++    if not ak:
++        raise HTTPException(status_code=404, detail="API key not found")
++    await db.delete(ak)
++    await db.commit()
++    return {"detail": "Deleted"}
+ 
+ 
+ # ── Usage history ──────────────────────────────────────────────
+diff --git a/app/routes/tasks.py b/app/routes/tasks.py
+index 673e881..3131027 100644
+--- a/app/routes/tasks.py
++++ b/app/routes/tasks.py
+@@ -40,6 +40,7 @@ class CreateTaskRequest(BaseModel):
+ 
+ 
+ # ── List tasks ────────────────────────────────────────────────
++@router.get("")
+ @router.get("/")
+ async def list_tasks(limit: int = 20, _admin=Depends(require_admin), db: AsyncSession = Depends(get_db)):
+     result = await db.execute(
+diff --git a/app/routes/voices.py b/app/routes/voices.py
+index 930d02e..288bd89 100644
+--- a/app/routes/voices.py
++++ b/app/routes/voices.py
+@@ -28,6 +28,7 @@ router = APIRouter(prefix="/api/voices", tags=["voices"])
+ 
+ 
+ # ── List voices ───────────────────────────────────────────────
++@router.get("")
+ @router.get("/")
+ async def list_voices(db: AsyncSession = Depends(get_db)):
+     result = await db.execute(select(Voice))
+diff --git a/app/routes/ws.py b/app/routes/ws.py
+index a159030..10ea9c8 100644
+--- a/app/routes/ws.py
++++ b/app/routes/ws.py
+@@ -11,8 +11,9 @@ from sqlalchemy import select, update, func
+ 
+ from app.database import async_session
+ from app.models import GoogleAccount, Task
+-from app.config import QUOTA_RESET_HOURS, WORKER_MAX_LIFETIME
++from app.config import QUOTA_RESET_HOURS, WORKER_MAX_LIFETIME, PROFILES_DIR
+ from app.automation import play_runner
++from pathlib import Path as _Path
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -238,9 +239,9 @@ async def websocket_worker(ws: WebSocket):
+                     manager.worker_info[email].pop("idle_since", None)
+                 await _handle_status(email, new_status)
+             elif action == "task_completed":
+-                await _handle_task_completed(data.get("task_id"))
++                await _handle_task_completed(data.get("task_id"), email)
+             elif action == "task_failed":
+-                await _handle_task_failed(data.get("task_id"), data.get("error", "Unknown"))
++                await _handle_task_failed(data.get("task_id"), data.get("error", "Unknown"), email)
+             elif action == "pong":
+                 pass
+     except WebSocketDisconnect:
+@@ -301,10 +302,16 @@ async def _try_dispatch_next_task(email: str):
+             await _dispatch_task(task, email, db)
+ 
+ 
+-async def _handle_task_completed(tid: str):
++async def _handle_task_completed(tid: str, email: str):
+     async with async_session() as db:
+         t = await db.get(Task, tid)
+         if t:
++            # Verify ownership
++            res = await db.execute(select(GoogleAccount).where(GoogleAccount.email == email))
++            acc = res.scalar_one_or_none()
++            if not acc or t.worker_id != acc.id:
++                logger.warning("Task %s ownership mismatch: worker %s != account %s", tid, t.worker_id, getattr(acc, 'id', None))
++                return
+             t.status = "COMPLETED"
+             t.completed_at = datetime.now(timezone.utc)
+             await db.commit()
+@@ -314,10 +321,16 @@ async def _handle_task_completed(tid: str):
+     await manager.broadcast_status({"event": "task_completed", "task_id": tid})
+ 
+ 
+-async def _handle_task_failed(tid: str, err: str):
++async def _handle_task_failed(tid: str, err: str, email: str):
+     async with async_session() as db:
+         t = await db.get(Task, tid)
+         if t:
++            # Verify ownership
++            res = await db.execute(select(GoogleAccount).where(GoogleAccount.email == email))
++            acc = res.scalar_one_or_none()
++            if not acc or t.worker_id != acc.id:
++                logger.warning("Task %s ownership mismatch for failure: worker %s != account %s", tid, t.worker_id, getattr(acc, 'id', None))
++                return
+             t.status = "FAILED"
+             t.error_message = err
+             t.completed_at = datetime.now(timezone.utc)
+@@ -371,11 +384,17 @@ async def _try_auto_rotate():
+             await play_runner.start_colab_worker(email, cfg.SERVER_URL)
+         except Exception as e:
+             logger.error("Rotation failed for %s: %s", email, e)
++            error_msg = str(e)
+             async with async_session() as db:
+                 res = await db.execute(select(GoogleAccount).where(GoogleAccount.email == email))
+                 acc = res.scalar_one_or_none()
+                 if acc:
+-                    acc.status = "OFFLINE"
++                    if "session expired" in error_msg.lower() or "needs re-login" in error_msg.lower() or "needs login" in error_msg.lower():
++                        acc.status = "NEEDS_LOGIN"
++                        acc.quota_reset_at = None
++                        logger.warning("Account %s marked NEEDS_LOGIN due to expired session", email)
++                    else:
++                        acc.status = "OFFLINE"
+                 await db.commit()
+ 
+ 
+@@ -403,13 +422,15 @@ async def _on_batch_request():
+ 
+ 
+ async def _maintenance_loop():
+-    """Background loop every 30s: reset stale CONNECTING, proactive scale-up, scale-down idle."""
+-    STALE_CONNECTING_TIMEOUT = 120
++    """30s loop: stale CONNECTING reset, scale-up/down, session check."""
++    STALE_CONNECTING_TIMEOUT = 300
++    SESSION_CHECK_INTERVAL = 30 * 60  # every 30 minutes
++    _last_session_check = 0.0
+     while True:
+         await asyncio.sleep(30)
+         now = datetime.now(timezone.utc)
+ 
+-        # 1. Reset stale CONNECTING accounts (browser opened but WS never connected)
++        # 1. Reset stale CONNECTING accounts
+         async with async_session() as db:
+             stale_cutoff = now - timedelta(seconds=STALE_CONNECTING_TIMEOUT)
+             result = await db.execute(
+@@ -423,7 +444,7 @@ async def _maintenance_loop():
+                 acc.status = "OFFLINE"
+             await db.commit()
+ 
+-        # 2. Proactive scale-up when pending pile up (not just on task creation)
++        # 2. Proactive scale-up
+         if not _rotate_lock.locked() and len(manager.active) < MAX_CONCURRENT_WORKERS:
+             async with async_session() as db:
+                 res = await db.execute(select(func.count()).select_from(Task).where(Task.status == "PENDING"))
+@@ -447,3 +468,61 @@ async def _maintenance_loop():
+                             logger.info("Scale-down: stopping idle worker %s", em)
+                             asyncio.create_task(stop_expired_worker(em))
+                             break
++
++        # 4. Periodic Google session check for all OFFLINE/ACTIVE accounts
++        if now.timestamp() - _last_session_check > SESSION_CHECK_INTERVAL:
++            _last_session_check = now.timestamp()
++            asyncio.create_task(_check_all_account_sessions())
++
++
++async def _check_all_account_sessions():
++    """Check Google session cookies for all accounts every 30 minutes.
++
++    Runs headless Playwright check for each account's profile.
++    If a session has expired, marks the account NEEDS_LOGIN so auto-rotate
++    won't try to start it (wasting resources on a headed browser that
++    would just show a login page).
++    """
++    logger.info("Starting periodic Google session check for all accounts...")
++    async with async_session() as db:
++        result = await db.execute(
++            select(GoogleAccount).where(GoogleAccount.status.in_(["OFFLINE", "ACTIVE", "CONNECTING"]))
++        )
++        accounts = result.scalars().all()
++
++    if not accounts:
++        return
++
++    from playwright.async_api import async_playwright
++
++    for acc in accounts:
++        profile_dir = str(PROFILES_DIR / acc.email)
++        if not _Path(profile_dir).exists():
++            continue
++
++        try:
++            pw = await async_playwright().start()
++            ctx = await pw.chromium.launch_persistent_context(
++                user_data_dir=profile_dir,
++                headless=True,
++                args=["--no-sandbox", "--disable-setuid-sandbox"],
++            )
++            cookies = await ctx.cookies("https://accounts.google.com")
++            await ctx.close()
++            await pw.stop()
++
++            names = {c.get("name") for c in cookies}
++            has_session = "SID" in names and ("SAPISID" in names or "HSID" in names)
++
++            if not has_session:
++                logger.warning("Session expired for %s — marking NEEDS_LOGIN", acc.email)
++                async with async_session() as db2:
++                    acc2 = await db2.get(GoogleAccount, acc.id)
++                    if acc2:
++                        acc2.status = "NEEDS_LOGIN"
++                        acc2.quota_reset_at = None
++                        await db2.commit()
++        except Exception as e:
++            logger.debug("Session check failed for %s: %s", acc.email, e)
++
++    logger.info("Periodic session check complete.")
+diff --git a/app/services/auth.py b/app/services/auth.py
+index 202bd97..b039734 100644
+--- a/app/services/auth.py
++++ b/app/services/auth.py
+@@ -10,7 +10,10 @@ from datetime import datetime, timedelta, timezone
+ from jose import JWTError, jwt
+ from app.models.user import UsageRecord
+ 
+-_SECRET_KEY = os.getenv("JWT_SECRET_KEY", secrets.token_hex(32))
++_jwt_secret = os.getenv("JWT_SECRET_KEY")
++if not _jwt_secret:
++    raise ValueError("JWT_SECRET_KEY must be set in .env")
++_SECRET_KEY = _jwt_secret
+ _ALGORITHM = "HS256"
+ _ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+ 
+diff --git a/app/static/dashboard.html b/app/static/dashboard.html
+deleted file mode 100644
+index 0eb0de0..0000000
+--- a/app/static/dashboard.html
++++ /dev/null
+@@ -1,372 +0,0 @@
+-<!DOCTYPE html>
+-<html lang="vi">
+-<head>
+-  <meta charset="UTF-8" />
+-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+-  <title>Dashboard — Clone TTS</title>
+-  <link rel="icon" href="/favicon.ico" />
+-  <style>
+-    @import url("https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500&display=swap");
+-    * { box-sizing: border-box; margin: 0; padding: 0; }
+-    :root {
+-      --bg: #09090B; --panel: #111114; --panel-2: #151519;
+-      --line: #2A2A30; --text: #F5F5F6; --muted: #A1A1AA; --faint: #71717A;
+-      --accent: #D6A95C; --green: #22C55E; --red: #EF4444; --blue: #60A5FA;
+-      --font: "Outfit", ui-sans-serif, sans-serif; --radius: 18px;
+-    }
+-    body {
+-      min-height: 100vh; background: var(--bg); color: var(--text);
+-      font-family: "Inter", ui-sans-serif, sans-serif;
+-    }
+-    .container { max-width: 960px; margin: 0 auto; padding: 32px 24px; }
+-    header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 36px; }
+-    .logo { font: 800 1.2rem var(--font); color: var(--accent); }
+-    nav a { color: var(--muted); text-decoration: none; margin-left: 20px; font-size: .9rem; cursor: pointer; }
+-    nav a:hover, nav a.active { color: var(--text); }
+-    .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 28px; margin-bottom: 20px; }
+-    .card h2 { font: 600 1.15rem var(--font); margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+-    .balance-big { font: 800 2.8rem var(--font); color: var(--accent); }
+-    .balance-label { color: var(--faint); font-size: .85rem; margin-top: 2px; }
+-    .row { display: flex; gap: 20px; flex-wrap: wrap; }
+-    .row > * { flex: 1; min-width: 200px; }
+-    .stat { color: var(--faint); font-size: .85rem; }
+-    .stat span { color: var(--text); font-weight: 600; font-size: 1.2rem; display: block; margin-top: 4px; }
+-    table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+-    th { text-align: left; color: var(--faint); font-weight: 500; padding: 8px 0; border-bottom: 1px solid var(--line); }
+-    td { padding: 10px 0; border-bottom: 1px solid var(--line-soft, rgba(255,255,255,.05)); }
+-    .api-key { font-family: monospace; color: var(--accent); font-size: .85rem; }
+-    .badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: .78rem; font-weight: 500; }
+-    .badge.active { background: rgba(34,197,94,.15); color: var(--green); }
+-    .badge.inactive { background: rgba(239,68,68,.15); color: var(--red); }
+-    .btn { display: inline-block; padding: 8px 20px; border-radius: 10px; font-weight: 600; cursor: pointer; border: none; font-size: .85rem; }
+-    .btn-sm { padding: 6px 14px; font-size: .8rem; }
+-    .btn-primary { background: var(--accent); color: #09090B; }
+-    .btn-primary:hover { opacity: .9; }
+-    .btn-danger { background: rgba(239,68,68,.15); color: var(--red); }
+-    .btn-outline { background: transparent; border: 1px solid var(--line); color: var(--text); }
+-    .toast { position: fixed; bottom: 30px; right: 30px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 20px; font-size: .9rem; display: none; z-index: 100; }
+-    .toast.show { display: block; }
+-    .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; place-items: center; z-index: 99; }
+-    .modal-bg.show { display: grid; }
+-    .modal { background: var(--panel); border: 1px solid var(--line); border-radius: 22px; padding: 36px; width: 440px; max-width: 92vw; }
+-    .modal h3 { font: 600 1.2rem var(--font); margin-bottom: 8px; }
+-    .modal p { color: var(--muted); font-size: .9rem; margin-bottom: 20px; }
+-    .modal input { width: 100%; padding: 10px 14px; background: #1A1A1F; border: 1px solid var(--line); border-radius: 10px; color: var(--text); font-size: .9rem; outline: none; margin-bottom: 16px; }
+-    .modal input:focus { border-color: var(--accent); }
+-    .modal .btn + .btn { margin-left: 10px; }
+-    .key-display { background: #1A1A1F; border: 1px solid var(--accent); border-radius: 10px; padding: 12px; font-family: monospace; font-size: .8rem; word-break: break-all; margin-bottom: 12px; color: var(--text); }
+-  </style>
+-</head>
+-<body>
+-  <div class="container">
+-    <header>
+-      <div class="logo">Clone TTS</div>
+-      <nav>
+-        <a class="active" id="navDashboard">Dashboard</a>
+-        <a id="navTts">Tạo TTS</a>
+-        <a id="navApiKeys">API Keys</a>
+-        <a id="navUsage">Lịch sử</a>
+-        <a id="navAccount">Tài khoản</a>
+-        <a id="navLogout">Đăng xuất</a>
+-      </nav>
+-    </header>
+-
+-    <div id="sectionDashboard">
+-      <div class="card">
+-        <h2>💰 Số dư ký tự</h2>
+-        <div class="balance-big id="balanceDisplay">0</div>
+-        <div class="balance-label">ký tự còn lại (1 ký tự = 1, không tính khoảng trắng)</div>
+-      </div>
+-      <div class="row">
+-        <div class="card">
+-          <div class="stat">Đã dùng<span id="totalUsed">0</span></div>
+-        </div>
+-        <div class="card">
+-          <div class="stat">API keys<span id="apiKeyCount">0</span></div>
+-        </div>
+-        <div class="card">
+-          <div class="stat">Email<span id="userEmail" style="font-size:1rem;color:var(--text)"></span></div>
+-        </div>
+-      </div>
+-    </div>
+-
+-    <div id="sectionTts" style="display:none">
+-      <div class="card">
+-        <h2>🎤 Tạo giọng nói</h2>
+-        <label style="display:block;color:var(--muted);font-size:.85rem;margin-bottom:6px">Chọn giọng</label>
+-        <select id="ttsVoiceSelect" style="width:100%;padding:10px 14px;background:#1A1A1F;border:1px solid var(--line);border-radius:10px;color:var(--text);font-size:.9rem;outline:none;margin-bottom:14px"></select>
+-        <label style="display:block;color:var(--muted);font-size:.85rem;margin-bottom:6px">Nội dung</label>
+-        <textarea id="ttsText" placeholder="Nhập nội dung cần chuyển giọng nói..." rows="4" style="width:100%;padding:12px;background:#1A1A1F;border:1px solid var(--line);border-radius:10px;color:var(--text);font-size:.9rem;outline:none;resize:vertical;margin-bottom:14px"></textarea>
+-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+-          <button class="btn btn-primary" id="ttsSubmitBtn">Tạo TTS</button>
+-          <span style="color:var(--faint);font-size:.85rem" id="ttsCharCount"></span>
+-          <span style="color:var(--faint);font-size:.85rem" id="ttsStatus"></span>
+-        </div>
+-        <div id="ttsResult" style="margin-top:16px;display:none">
+-          <audio controls style="width:100%"></audio>
+-        </div>
+-      </div>
+-    </div>
+-
+-    <div id="sectionAccount" style="display:none">
+-      <div class="card">
+-        <h2>🔐 Đổi mật khẩu</h2>
+-        <form id="changePwdForm">
+-          <label for="currentPassword">Mật khẩu hiện tại</label>
+-          <input type="password" id="currentPassword" placeholder="••••••••" required style="margin-bottom:14px" />
+-          <label for="newPassword">Mật khẩu mới</label>
+-          <input type="password" id="newPassword" placeholder="Tối thiểu 6 ký tự" required minlength="6" style="margin-bottom:14px" />
+-          <button type="submit" class="btn btn-primary" id="changePwdBtn">Đổi mật khẩu</button>
+-        </form>
+-        <div id="changePwdMsg" style="margin-top:12px;font-size:.85rem"></div>
+-      </div>
+-    </div>
+-
+-    <div id="sectionApiKeys" style="display:none">
+-      <div class="card">
+-        <h2>🔑 API Keys</h2>
+-        <div style="margin-bottom:16px">
+-          <input type="text" id="newKeyName" placeholder="Tên key (vd: Production)" style="padding:10px 14px;background:#1A1A1F;border:1px solid var(--line);border-radius:10px;color:var(--text);font-size:.9rem;outline:none;width:260px;margin-right:10px" />
+-          <button class="btn btn-primary" id="createKeyBtn">Tạo key mới</button>
+-        </div>
+-        <table>
+-          <thead><tr><th>Tên</th><th>Key</th><th>Trạng thái</th><th>Lần cuối</th><th></th></tr></thead>
+-          <tbody id="apiKeyList"></tbody>
+-        </table>
+-      </div>
+-    </div>
+-
+-    <div id="sectionUsage" style="display:none">
+-      <div class="card">
+-        <h2>📊 Lịch sử sử dụng</h2>
+-        <table>
+-          <thead><tr><th>Thời gian</th><th>Ký tự</th><th>Chi phí</th><th>Nguồn</th></tr></thead>
+-          <tbody id="usageList"></tbody>
+-        </table>
+-      </div>
+-    </div>
+-  </div>
+-
+-  <div class="modal-bg" id="newKeyModal">
+-    <div class="modal">
+-      <h3>🔑 API Key mới</h3>
+-      <p>Copy key này ngay — nó sẽ không hiển thị lại.</p>
+-      <div class="key-display" id="keyDisplay"></div>
+-      <button class="btn btn-primary" id="copyKeyBtn">Sao chép</button>
+-      <button class="btn btn-outline" id="closeModalBtn">Đóng</button>
+-    </div>
+-  </div>
+-
+-  <div class="toast" id="toast"></div>
+-
+-  <script>
+-    const API = "";
+-    function getToken() { return localStorage.getItem("token"); }
+-    function getUser() { try { return JSON.parse(localStorage.getItem("user")); } catch { return null; } }
+-    function showToast(msg) { const t = document.getElementById("toast"); t.textContent = msg; t.className = "toast show"; setTimeout(() => t.className = "toast", 3000); }
+-
+-    async function api(path, opts = {}) {
+-      const token = getToken();
+-      if (!token) { window.location.href = "/login"; return null; }
+-      const r = await fetch(API + path, {
+-        ...opts,
+-        headers: { ...opts.headers, "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+-      });
+-      if (r.status === 401) { localStorage.clear(); window.location.href = "/login"; return null; }
+-      const data = await r.json().catch(() => null);
+-      if (!r.ok) throw new Error(data?.message || data?.detail || `HTTP ${r.status}`);
+-      return data;
+-    }
+-
+-    async function loadDashboard() {
+-      try {
+-        const user = await api("/api/auth/profile");
+-        if (!user) return;
+-        document.getElementById("balanceDisplay").textContent = user.balance.toLocaleString();
+-        document.getElementById("userEmail").textContent = user.email;
+-
+-        const usage = await api("/api/auth/usage");
+-        document.getElementById("totalUsed").textContent = (usage?.total_used || 0).toLocaleString();
+-
+-        const keys = await api("/api/auth/api-keys");
+-        document.getElementById("apiKeyCount").textContent = (keys || []).length;
+-      } catch (e) { showToast("Lỗi tải dashboard: " + e.message); }
+-    }
+-
+-    async function loadApiKeys() {
+-      try {
+-        const keys = await api("/api/auth/api-keys");
+-        const tbody = document.getElementById("apiKeyList");
+-        tbody.innerHTML = "";
+-        if (!keys || keys.length === 0) {
+-          tbody.innerHTML = '<tr><td colspan="5" style="color:var(--faint);text-align:center;padding:20px">Chưa có API key nào</td></tr>';
+-          return;
+-        }
+-        keys.forEach(k => {
+-          const tr = document.createElement("tr");
+-          const active = k.is_active;
+-          tr.innerHTML = `
+-            <td>${k.name}</td>
+-            <td class="api-key">${k.key_prefix}...</td>
+-            <td><span class="badge ${active ? 'active' : 'inactive'}">${active ? 'Active' : 'Inactive'}</span></td>
+-            <td style="color:var(--faint);font-size:.85rem">${k.last_used_at ? new Date(k.last_used_at).toLocaleDateString() : 'Chưa dùng'}</td>
+-            <td>${active ? `<button class="btn btn-sm btn-danger" onclick="deactivateKey(${k.id})">Deactivate</button>` : ''}</td>
+-          `;
+-          tbody.appendChild(tr);
+-        });
+-      } catch (e) { showToast("Lỗi tải API keys: " + e.message); }
+-    }
+-
+-    async function loadUsage() {
+-      try {
+-        const data = await api("/api/auth/usage");
+-        const tbody = document.getElementById("usageList");
+-        tbody.innerHTML = "";
+-        if (!data || !data.records || data.records.length === 0) {
+-          tbody.innerHTML = '<tr><td colspan="4" style="color:var(--faint);text-align:center;padding:20px">Chưa có lịch sử sử dụng</td></tr>';
+-          return;
+-        }
+-        data.records.forEach(r => {
+-          const tr = document.createElement("tr");
+-          tr.innerHTML = `
+-            <td style="color:var(--faint);font-size:.85rem">${new Date(r.created_at).toLocaleString()}</td>
+-            <td>${r.characters}</td>
+-            <td style="color:var(--accent)">-${r.cost}</td>
+-            <td><span class="badge active">${r.source}</span></td>
+-          `;
+-          tbody.appendChild(tr);
+-        });
+-      } catch (e) { showToast("Lỗi tải lịch sử: " + e.message); }
+-    }
+-
+-    async function loadVoices() {
+-      try {
+-        const voices = await api("/api/voices/");
+-        const sel = document.getElementById("ttsVoiceSelect");
+-        sel.innerHTML = voices.map(v => `<option value="${v.id}">${v.name}</option>`).join("");
+-      } catch (e) { showToast("Lỗi tải voices: " + e.message); }
+-    }
+-
+-    let ttsTimer = null;
+-    document.getElementById("ttsText").addEventListener("input", function() {
+-      clearTimeout(ttsTimer);
+-      ttsTimer = setTimeout(() => {
+-        const chars = this.value.replace(/\s/g, "").length;
+-        document.getElementById("ttsCharCount").textContent = `${chars} ký tự (không tính khoảng trắng)`;
+-      }, 300);
+-    });
+-
+-    document.getElementById("ttsSubmitBtn").addEventListener("click", async function() {
+-      const text = document.getElementById("ttsText").value.trim();
+-      const voiceId = parseInt(document.getElementById("ttsVoiceSelect").value);
+-      if (!text) { showToast("Vui lòng nhập nội dung"); return; }
+-      if (!voiceId) { showToast("Vui lòng chọn giọng"); return; }
+-      this.disabled = true;
+-      this.textContent = "Đang xử lý...";
+-      document.getElementById("ttsStatus").textContent = "Đang chờ worker...";
+-      try {
+-        const r = await fetch("/api/tts/text", {
+-          method: "POST",
+-          headers: { "Authorization": `Bearer ${getToken()}`, "Content-Type": "application/json" },
+-          body: JSON.stringify({ text, voice_id: voiceId }),
+-        });
+-        if (!r.ok) {
+-          const err = await r.json().catch(() => ({}));
+-          const msg = err.message || err.detail || `HTTP ${r.status}`;
+-          if (r.status === 402) showToast("Không đủ ký tự!");
+-          else showToast("Lỗi: " + msg);
+-          document.getElementById("ttsStatus").textContent = "Thất bại: " + msg;
+-          return;
+-        }
+-        const blob = await r.blob();
+-        const url = URL.createObjectURL(blob);
+-        const audio = document.querySelector("#ttsResult audio");
+-        audio.src = url;
+-        document.getElementById("ttsResult").style.display = "block";
+-        document.getElementById("ttsStatus").textContent = "Hoàn thành!";
+-        loadDashboard();
+-      } catch (e) { showToast("Lỗi: " + e.message); }
+-      finally {
+-        this.disabled = false;
+-        this.textContent = "Tạo TTS";
+-      }
+-    });
+-
+-    async function createKey() {
+-      const name = document.getElementById("newKeyName").value.trim() || "Default";
+-      try {
+-        const data = await api("/api/auth/api-keys", {
+-          method: "POST",
+-          body: JSON.stringify({ name }),
+-        });
+-        document.getElementById("keyDisplay").textContent = data.key;
+-        document.getElementById("newKeyModal").className = "modal-bg show";
+-        document.getElementById("newKeyName").value = "";
+-        loadApiKeys();
+-      } catch (e) { showToast("Lỗi tạo key: " + e.message); }
+-    }
+-
+-    async function deactivateKey(id) {
+-      if (!confirm("Deactivate this API key?")) return;
+-      try {
+-        await api(`/api/auth/api-keys/${id}`, { method: "DELETE" });
+-        showToast("Key đã được deactivate");
+-        loadApiKeys();
+-      } catch (e) { showToast("Lỗi: " + e.message); }
+-    }
+-
+-    document.getElementById("copyKeyBtn").addEventListener("click", () => {
+-      const text = document.getElementById("keyDisplay").textContent;
+-      navigator.clipboard.writeText(text).then(() => showToast("Đã copy key"));
+-    });
+-    document.getElementById("closeModalBtn").addEventListener("click", () => {
+-      document.getElementById("newKeyModal").className = "modal-bg";
+-    });
+-    document.getElementById("createKeyBtn").addEventListener("click", createKey);
+-
+-    function showSection(id) {
+-      ["Dashboard","Tts","ApiKeys","Usage","Account"].forEach(s => {
+-        document.getElementById("section" + s).style.display = s === id ? "block" : "none";
+-        document.getElementById("nav" + s).className = s === id ? "active" : "";
+-      });
+-    }
+-
+-    document.getElementById("navDashboard").addEventListener("click", () => { showSection("Dashboard"); loadDashboard(); });
+-    document.getElementById("navTts").addEventListener("click", () => { showSection("Tts"); loadVoices(); });
+-    document.getElementById("navApiKeys").addEventListener("click", () => { showSection("ApiKeys"); loadApiKeys(); });
+-    document.getElementById("navUsage").addEventListener("click", () => { showSection("Usage"); loadUsage(); });
+-    document.getElementById("navAccount").addEventListener("click", () => { showSection("Account"); });
+-    document.getElementById("navLogout").addEventListener("click", () => {
+-      if (confirm("Đăng xuất?")) { localStorage.clear(); window.location.href = "/"; }
+-    });
+-
+-    // Change password
+-    document.getElementById("changePwdForm").addEventListener("submit", async (e) => {
+-      e.preventDefault();
+-      const msg = document.getElementById("changePwdMsg");
+-      const btn = document.getElementById("changePwdBtn");
+-      const cur = document.getElementById("currentPassword").value;
+-      const pwd = document.getElementById("newPassword").value;
+-      btn.disabled = true; btn.textContent = "Đang xử lý...";
+-      try {
+-        const r = await api("/api/auth/change-password", {
+-          method: "POST",
+-          body: JSON.stringify({ current_password: cur, new_password: pwd }),
+-        });
+-        msg.textContent = "Mật khẩu đã được cập nhật!";
+-        msg.style.color = "var(--green)";
+-        document.getElementById("currentPassword").value = "";
+-        document.getElementById("newPassword").value = "";
+-      } catch (e) {
+-        msg.textContent = "Lỗi: " + e.message;
+-        msg.style.color = "var(--red)";
+-      }
+-      btn.disabled = false; btn.textContent = "Đổi mật khẩu";
+-    });
+-
+-    const user = getUser();
+-    if (!user || !getToken()) { window.location.href = "/login"; }
+-    loadDashboard();
+-  </script>
+-</body>
+-</html>
+diff --git a/app/static/login.html b/app/static/login.html
+deleted file mode 100644
+index 245b5df..0000000
+--- a/app/static/login.html
++++ /dev/null
+@@ -1,157 +0,0 @@
+-<!DOCTYPE html>
+-<html lang="vi">
+-<head>
+-  <meta charset="UTF-8" />
+-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+-  <title>Đăng nhập — Clone TTS</title>
+-  <link rel="icon" href="/favicon.ico" />
+-  <style>
+-    @import url("https://fonts.googleapis.com/css2?family=Outfit:wght@600;700;800&family=Inter:wght@400;500&display=swap");
+-    * { box-sizing: border-box; margin: 0; padding: 0; }
+-    :root { --bg: #09090B; --panel: #111114; --line: #2A2A30; --text: #F5F5F6; --muted: #A1A1AA; --accent: #D6A95C; --red: #EF4444; --green: #22C55E; --font: "Outfit", ui-sans-serif, sans-serif; }
+-    body { min-height: 100vh; display: grid; place-items: center; background: radial-gradient(circle at 30% 20%, rgba(214,169,92,.08), transparent 50%), var(--bg); font-family: "Inter", ui-sans-serif, sans-serif; }
+-    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 22px; padding: 44px 40px; width: 400px; max-width: 92vw; }
+-    .logo { font: 800 1.4rem var(--font); color: var(--accent); text-align: center; margin-bottom: 6px; }
+-    .subtitle { text-align: center; color: var(--muted); font-size: .9rem; margin-bottom: 32px; }
+-    label { display: block; font-size: .85rem; font-weight: 500; color: var(--muted); margin-bottom: 6px; }
+-    input { width: 100%; padding: 12px 16px; background: #1A1A1F; border: 1px solid var(--line); border-radius: 12px; color: var(--text); font-size: .95rem; outline: none; margin-bottom: 18px; }
+-    input:focus { border-color: var(--accent); }
+-    .btn { width: 100%; padding: 13px; border-radius: 12px; font-weight: 600; font-size: 1rem; cursor: pointer; border: none; background: var(--accent); color: #09090B; display:flex;align-items:center;justify-content:center;gap:8px }
+-    .btn:hover { opacity: .9; }
+-    .btn:disabled { opacity: .4; cursor: not-allowed; }
+-    .spinner { width:18px;height:18px;border:2px solid rgba(0,0,0,.2);border-top-color:#09090B;border-radius:50%;animation:spin .6s linear infinite;display:none }
+-    .btn.loading .spinner { display:inline-block }
+-    .btn.loading .btn-text { display:none }
+-    @keyframes spin { to { transform:rotate(360deg) } }
+-    .error { color: var(--red); font-size: .85rem; margin-bottom: 12px; display: none; }
+-    .error.show { display: block; }
+-    .checkbox { display:flex;align-items:center;gap:8px;margin-bottom:18px;color:var(--muted);font-size:.85rem }
+-    .checkbox input { width:auto;margin:0;accent-color:var(--accent) }
+-    .link { text-align: center; margin-top: 20px; font-size: .9rem; color: var(--muted); }
+-    .link a { color: var(--accent); text-decoration: none; font-weight: 500; }
+-  </style>
+-</head>
+-<body>
+-  <div class="card">
+-    <div class="logo">Clone TTS</div>
+-    <div class="subtitle">Đăng nhập vào tài khoản của bạn</div>
+-    <div class="error" id="error"></div>
+-    <form id="loginForm">
+-      <label for="email">Email</label>
+-      <input type="email" id="email" placeholder="your@email.com" required autocomplete="email" />
+-      <label for="password">Mật khẩu</label>
+-      <input type="password" id="password" placeholder="••••••••" required autocomplete="current-password" />
+-      <label class="checkbox"><input type="checkbox" id="remember" checked /> Ghi nhớ đăng nhập</label>
+-      <button type="submit" class="btn" id="submitBtn"><span class="spinner"></span><span class="btn-text">Đăng nhập</span></button>
+-    </form>
+-    <div style="display:flex;align-items:center;gap:12px;margin:18px 0;color:var(--faint);font-size:.8rem">
+-      <hr style="flex:1;border:none;border-top:1px solid var(--line)" /><span>HOẶC</span><hr style="flex:1;border:none;border-top:1px solid var(--line)" />
+-    </div>
+-    <div id="g_id_onload"
+-         data-client_id="GOOGLE_CLIENT_ID"
+-         data-context="signin"
+-         data-ux_mode="popup"
+-         data-callback="handleGoogleCredential"
+-         data-auto_prompt="false">
+-    </div>
+-    <div class="g_id_signin" data-type="standard" data-shape="rectangular" data-theme="outline" data-text="signin_with" data-size="large" data-logo_alignment="left" style="width:100%;min-height:44px"></div>
+-    <div class="link" style="margin-top:14px">Chưa có tài khoản? <a href="/signup">Đăng ký</a></div>
+-  </div>
+-
+-  <script>
+-    const form = document.getElementById("loginForm");
+-    const email = document.getElementById("email");
+-    const password = document.getElementById("password");
+-    const remember = document.getElementById("remember");
+-    const error = document.getElementById("error");
+-    const btn = document.getElementById("submitBtn");
+-
+-    const params = new URLSearchParams(location.search);
+-    if (params.get("registered")) {
+-      error.textContent = "Đăng ký thành công! Vui lòng đăng nhập.";
+-      error.className = "error show";
+-      error.style.color = "var(--green)";
+-    }
+-
+-    form.addEventListener("submit", async (e) => {
+-      e.preventDefault();
+-      error.className = "error";
+-      btn.disabled = true;
+-      btn.classList.add("loading");
+-      try {
+-        const r = await fetch("/api/auth/login", {
+-          method: "POST",
+-          headers: { "Content-Type": "application/json" },
+-          body: JSON.stringify({ email: email.value, password: password.value }),
+-        });
+-        const data = await r.json();
+-        if (!r.ok) {
+-          error.textContent = data.message || data.detail || "Đăng nhập thất bại";
+-          error.className = "error show";
+-          btn.disabled = false; btn.classList.remove("loading");
+-          return;
+-        }
+-        localStorage.setItem("token", data.token);
+-        localStorage.setItem("user", JSON.stringify(data.user));
+-        window.location.href = data.user.role === "admin" ? "/admin/" : "/dashboard";
+-      } catch (err) {
+-        error.textContent = "Lỗi kết nối đến server";
+-        error.className = "error show";
+-        btn.disabled = false; btn.classList.remove("loading");
+-      }
+-    });
+-  </script>
+-  <div class="toast" id="googleToast" style="position:fixed;bottom:30px;right:30px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 20px;font-size:.9rem;display:none;z-index:100"></div>
+-
+-  <script src="https://accounts.google.com/gsi/client" async></script>
+-  <script>
+-    // Fetch config and set Google Client ID
+-    fetch("/api/config").then(r => r.json()).then(config => {
+-      const el = document.getElementById("g_id_onload");
+-      if (config.google_client_id) {
+-        el.setAttribute("data-client_id", config.google_client_id);
+-      } else {
+-        el.style.display = "none";
+-        document.querySelector(".g_id_signin")?.style.setProperty("display", "none");
+-      }
+-    }).catch(() => {});
+-
+-    function showToast(msg) {
+-      const t = document.getElementById("googleToast");
+-      t.textContent = msg; t.style.display = "block";
+-      setTimeout(() => { t.style.display = "none"; }, 5000);
+-    }
+-
+-    async function handleGoogleCredential(response) {
+-      const btn = document.getElementById("submitBtn");
+-      btn.disabled = true; btn.classList.add("loading");
+-      try {
+-        // Get client_id from the page
+-        const el = document.getElementById("g_id_onload");
+-        const clientId = el.getAttribute("data-client_id");
+-
+-        const r = await fetch("/api/auth/google", {
+-          method: "POST",
+-          headers: { "Content-Type": "application/json" },
+-          body: JSON.stringify({ credential: response.credential, client_id: clientId }),
+-        });
+-        const data = await r.json();
+-        if (!r.ok) {
+-          showToast(data.message || data.detail || "Google đăng nhập thất bại");
+-          btn.disabled = false; btn.classList.remove("loading");
+-          return;
+-        }
+-        localStorage.setItem("token", data.token);
+-        localStorage.setItem("user", JSON.stringify(data.user));
+-        showToast(data.message || "Đăng nhập thành công!");
+-        setTimeout(() => {
+-          window.location.href = data.user.role === "admin" ? "/admin/" : "/dashboard";
+-        }, 1500);
+-      } catch (err) {
+-        showToast("Lỗi kết nối: " + err.message);
+-        btn.disabled = false; btn.classList.remove("loading");
+-      }
+-    }
+-  </script>
+-</body>
+-</html>
+diff --git a/app/static/signup.html b/app/static/signup.html
+deleted file mode 100644
+index b475fb2..0000000
+--- a/app/static/signup.html
++++ /dev/null
+@@ -1,94 +0,0 @@
+-<!DOCTYPE html>
+-<html lang="vi">
+-<head>
+-  <meta charset="UTF-8" />
+-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+-  <title>Đăng ký — Clone TTS</title>
+-  <link rel="icon" href="/favicon.ico" />
+-  <style>
+-    @import url("https://fonts.googleapis.com/css2?family=Outfit:wght@600;700;800&family=Inter:wght@400;500&display=swap");
+-    * { box-sizing: border-box; margin: 0; padding: 0; }
+-    :root {
+-      --bg: #09090B; --panel: #111114; --line: #2A2A30;
+-      --text: #F5F5F6; --muted: #A1A1AA; --accent: #D6A95C;
+-      --red: #EF4444; --green: #22C55E; --font: "Outfit", ui-sans-serif, sans-serif;
+-    }
+-    body {
+-      min-height: 100vh; display: grid; place-items: center;
+-      background: radial-gradient(circle at 70% 80%, rgba(214,169,92,.08), transparent 50%), var(--bg);
+-      font-family: "Inter", ui-sans-serif, sans-serif;
+-    }
+-    .card {
+-      background: var(--panel); border: 1px solid var(--line); border-radius: 22px;
+-      padding: 44px 40px; width: 400px; max-width: 92vw;
+-    }
+-    .logo { font: 800 1.4rem var(--font); color: var(--accent); text-align: center; margin-bottom: 6px; }
+-    .subtitle { text-align: center; color: var(--muted); font-size: .9rem; margin-bottom: 32px; }
+-    label { display: block; font-size: .85rem; font-weight: 500; color: var(--muted); margin-bottom: 6px; }
+-    input { width: 100%; padding: 12px 16px; background: #1A1A1F; border: 1px solid var(--line); border-radius: 12px; color: var(--text); font-size: .95rem; outline: none; margin-bottom: 18px; }
+-    input:focus { border-color: var(--accent); }
+-    .btn { width: 100%; padding: 13px; border-radius: 12px; font-weight: 600; font-size: 1rem; cursor: pointer; border: none; background: var(--accent); color: #09090B; display:flex;align-items:center;justify-content:center;gap:8px }
+-    .btn:hover { opacity: .9; }
+-    .btn:disabled { opacity: .4; cursor: not-allowed; }
+-    .spinner { width:18px;height:18px;border:2px solid rgba(0,0,0,.2);border-top-color:#09090B;border-radius:50%;animation:spin .6s linear infinite;display:none }
+-    .btn.loading .spinner { display:inline-block }
+-    .btn.loading .btn-text { display:none }
+-    @keyframes spin { to { transform:rotate(360deg) } }
+-    .error { color: var(--red); font-size: .85rem; margin-bottom: 12px; display: none; }
+-    .error.show { display: block; }
+-    .link { text-align: center; margin-top: 20px; font-size: .9rem; color: var(--muted); }
+-    .link a { color: var(--accent); text-decoration: none; font-weight: 500; }
+-  </style>
+-</head>
+-<body>
+-  <div class="card">
+-    <div class="logo">Clone TTS</div>
+-    <div class="subtitle">Tạo tài khoản mới</div>
+-    <div class="error" id="error"></div>
+-    <form id="signupForm">
+-      <label for="email">Email</label>
+-      <input type="email" id="email" placeholder="your@email.com" required autocomplete="email" />
+-      <label for="password">Mật khẩu</label>
+-      <input type="password" id="password" placeholder="Tối thiểu 6 ký tự" required minlength="6" autocomplete="new-password" />
+-      <button type="submit" class="btn" id="submitBtn"><span class="spinner"></span><span class="btn-text">Đăng ký</span></button>
+-    </form>
+-    <div class="link">Đã có tài khoản? <a href="/login">Đăng nhập</a></div>
+-  </div>
+-
+-  <script>
+-    const form = document.getElementById("signupForm");
+-    const email = document.getElementById("email");
+-    const password = document.getElementById("password");
+-    const error = document.getElementById("error");
+-    const btn = document.getElementById("submitBtn");
+-
+-    form.addEventListener("submit", async (e) => {
+-      e.preventDefault();
+-      error.className = "error";
+-      btn.disabled = true;
+-      btn.classList.add("loading");
+-      try {
+-        const r = await fetch("/api/auth/signup", {
+-          method: "POST",
+-          headers: { "Content-Type": "application/json" },
+-          body: JSON.stringify({ email: email.value, password: password.value }),
+-        });
+-        const data = await r.json();
+-        if (!r.ok) {
+-          error.textContent = data.message || data.detail || "Đăng ký thất bại";
+-          error.className = "error show";
+-          btn.disabled = false; btn.classList.remove("loading");
+-          return;
+-        }
+-        localStorage.setItem("token", data.token);
+-        localStorage.setItem("user", JSON.stringify(data.user));
+-        window.location.href = "/dashboard";
+-      } catch (err) {
+-        error.textContent = "Lỗi kết nối đến server";
+-        error.className = "error show";
+-        btn.disabled = false; btn.classList.remove("loading");
+-      }
+-    });
+-  </script>
+-</body>
+-</html>
+diff --git a/data/db.sqlite3 b/data/db.sqlite3
+index 3c0fae6..9539a91 100644
+Binary files a/data/db.sqlite3 and b/data/db.sqlite3 differ
+diff --git a/frontend/package-lock.json b/frontend/package-lock.json
+index d3da96d..fe1c201 100644
+--- a/frontend/package-lock.json
++++ b/frontend/package-lock.json
+@@ -12,7 +12,8 @@
+         "next": "16.2.9",
+         "react": "19.2.4",
+         "react-dom": "19.2.4",
+-        "react-icons": "^5.6.0"
++        "react-icons": "^5.6.0",
++        "sonner": "^2.0.7"
+       },
+       "devDependencies": {
+         "@tailwindcss/postcss": "^4",
+@@ -280,9 +281,9 @@
+       }
+     },
+     "node_modules/@emnapi/wasi-threads": {
+-      "version": "1.2.1",
+-      "resolved": "https://registry.npmjs.org/@emnapi/wasi-threads/-/wasi-threads-1.2.1.tgz",
+-      "integrity": "sha512-uTII7OYF+/Mes/MrcIOYp5yOtSMLBWSIoLPpcgwipoiKbli6k322tcoFsxoIIxPDqW01SQGAgko4EzZi2BNv2w==",
++      "version": "1.2.2",
++      "resolved": "https://registry.npmjs.org/@emnapi/wasi-threads/-/wasi-threads-1.2.2.tgz",
++      "integrity": "sha512-c95qOXkHdydNKhscBTebqEC1CVAZpyqOfVfBzQ1qgzyl3gfeldUjIggDbIZgDKsHLgnsM+igH7TJ/eAasaVuMA==",
+       "dev": true,
+       "license": "MIT",
+       "optional": true,
+@@ -2144,6 +2145,18 @@
+         "node": ">=14.0.0"
+       }
+     },
++    "node_modules/@unrs/resolver-binding-wasm32-wasi/node_modules/@emnapi/core": {
++      "version": "1.10.0",
++      "resolved": "https://registry.npmjs.org/@emnapi/core/-/core-1.10.0.tgz",
++      "integrity": "sha512-yq6OkJ4p82CAfPl0u9mQebQHKPJkY7WrIuk205cTYnYe+k2Z8YBh11FrbRG/H6ihirqcacOgl2BIO8oyMQLeXw==",
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "dependencies": {
++        "@emnapi/wasi-threads": "1.2.1",
++        "tslib": "^2.4.0"
++      }
++    },
+     "node_modules/@unrs/resolver-binding-wasm32-wasi/node_modules/@emnapi/runtime": {
+       "version": "1.10.0",
+       "resolved": "https://registry.npmjs.org/@emnapi/runtime/-/runtime-1.10.0.tgz",
+@@ -2155,6 +2168,17 @@
+         "tslib": "^2.4.0"
+       }
+     },
++    "node_modules/@unrs/resolver-binding-wasm32-wasi/node_modules/@emnapi/wasi-threads": {
++      "version": "1.2.1",
++      "resolved": "https://registry.npmjs.org/@emnapi/wasi-threads/-/wasi-threads-1.2.1.tgz",
++      "integrity": "sha512-uTII7OYF+/Mes/MrcIOYp5yOtSMLBWSIoLPpcgwipoiKbli6k322tcoFsxoIIxPDqW01SQGAgko4EzZi2BNv2w==",
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "dependencies": {
++        "tslib": "^2.4.0"
++      }
++    },
+     "node_modules/@unrs/resolver-binding-win32-arm64-msvc": {
+       "version": "1.12.2",
+       "resolved": "https://registry.npmjs.org/@unrs/resolver-binding-win32-arm64-msvc/-/resolver-binding-win32-arm64-msvc-1.12.2.tgz",
+@@ -5990,6 +6014,16 @@
+         "url": "https://github.com/sponsors/ljharb"
+       }
+     },
++    "node_modules/sonner": {
++      "version": "2.0.7",
++      "resolved": "https://registry.npmjs.org/sonner/-/sonner-2.0.7.tgz",
++      "integrity": "sha512-W6ZN4p58k8aDKA4XPcx2hpIQXBRAgyiWVkYhT7CvK6D3iAu7xjvVyhQHg2/iaKJZ1XVJ4r7XuwGL+WGEK37i9w==",
++      "license": "MIT",
++      "peerDependencies": {
++        "react": "^18.0.0 || ^19.0.0 || ^19.0.0-rc",
++        "react-dom": "^18.0.0 || ^19.0.0 || ^19.0.0-rc"
++      }
++    },
+     "node_modules/source-map-js": {
+       "version": "1.2.1",
+       "resolved": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.1.tgz",
+diff --git a/frontend/package.json b/frontend/package.json
+index 70fa7f7..34d0aa1 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -13,7 +13,8 @@
+     "next": "16.2.9",
+     "react": "19.2.4",
+     "react-dom": "19.2.4",
+-    "react-icons": "^5.6.0"
++    "react-icons": "^5.6.0",
++    "sonner": "^2.0.7"
+   },
+   "devDependencies": {
+     "@tailwindcss/postcss": "^4",
+diff --git a/frontend/src/app/dashboard/page.tsx b/frontend/src/app/dashboard/page.tsx
+index 6fdda7e..dbb96b5 100644
+--- a/frontend/src/app/dashboard/page.tsx
++++ b/frontend/src/app/dashboard/page.tsx
+@@ -3,7 +3,11 @@
+ import { useEffect, useState, useCallback } from "react";
+ import { useRouter } from "next/navigation";
+ import Link from "next/link";
+-import { HiArrowRight, HiMicrophone, HiKey, HiClock, HiTrash, HiPlus, HiCheck, HiExclamationTriangle } from "react-icons/hi2";
++import { HiArrowRight, HiMicrophone, HiKey, HiClock, HiTrash, HiPlus, HiCheck } from "react-icons/hi2";
++import { toast } from "sonner";
++import { motion, AnimatePresence } from "motion/react";
++
++import { api } from "@/lib/api";
+ 
+ interface UserProfile {
+   id: number;
+@@ -34,35 +38,22 @@ interface Voice {
+   name: string;
+ }
+ 
+-function useAuth() {
++function useUser() {
+   const router = useRouter();
+   const [user, setUser] = useState<UserProfile | null>(null);
+-  const [token, setToken] = useState<string | null>(null);
+ 
+   useEffect(() => {
+     const t = localStorage.getItem("token");
+     const u = localStorage.getItem("user");
+     if (!t || !u) { router.push("/login"); return; }
+-    setToken(t);
+     setUser(JSON.parse(u));
+   }, [router]);
+ 
+-  const api = useCallback(async (path: string, opts: RequestInit = {}) => {
+-    const res = await fetch(path, {
+-      ...opts,
+-      headers: { ...opts.headers, "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+-    });
+-    if (res.status === 401) { localStorage.clear(); router.push("/login"); throw new Error("Session expired"); }
+-    const data = await res.json().catch(() => null);
+-    if (!res.ok) throw new Error(data?.message || data?.detail || `HTTP ${res.status}`);
+-    return data;
+-  }, [token, router]);
+-
+-  return { user, token, api, setUser };
++  return { user, setUser };
+ }
+ 
+ export default function DashboardPage() {
+-  const { user, api, setUser } = useAuth();
++  const { user, setUser } = useUser();
+   const router = useRouter();
+   const [tab, setTab] = useState("overview");
+   const [keys, setKeys] = useState<ApiKey[]>([]);
+@@ -75,11 +66,11 @@ export default function DashboardPage() {
+   const [ttsResult, setTtsResult] = useState<string | null>(null);
+   const [newKeyName, setNewKeyName] = useState("");
+   const [newKeyDisplay, setNewKeyDisplay] = useState<string | null>(null);
+-  const [message, setMessage] = useState("");
++  const [showConfirm, setShowConfirm] = useState<number | null>(null);
+ 
+   const loadKeys = useCallback(async () => {
+     try { setKeys(await api("/api/auth/api-keys")); } catch {}
+-  }, [api]);
++  }, []);
+ 
+   const loadUsage = useCallback(async () => {
+     try {
+@@ -87,51 +78,52 @@ export default function DashboardPage() {
+       setUsage(data.records || []);
+       setTotalUsed(data.total_used || 0);
+     } catch {}
+-  }, [api]);
++  }, []);
+ 
+   const loadVoices = useCallback(async () => {
+     try { setVoices(await api("/api/voices/")); } catch {}
+-  }, [api]);
++  }, []);
+ 
+-  useEffect(() => { if (user) { loadKeys(); } }, [user, loadKeys]);
++  useEffect(() => {
++    if (user) {
++      loadKeys();
++      loadVoices();
++    }
++  }, [user, loadKeys, loadVoices]);
+ 
+-  const createKey = async () => {
++  const createKey = async (e?: React.FormEvent) => {
++    if (e) e.preventDefault();
+     try {
+       const data = await api("/api/auth/api-keys", { method: "POST", body: JSON.stringify({ name: newKeyName || "Default" }) });
+       setNewKeyDisplay(data.key);
+       setNewKeyName("");
++      toast.success("Tạo API key thành công");
+       loadKeys();
+-    } catch (e: any) { setMessage(e.message); }
++    } catch (e: any) { toast.error(e.message); }
+   };
+ 
+   const deactivateKey = async (id: number) => {
+-    if (!confirm("Deactivate this API key?")) return;
+-    try { await api(`/api/auth/api-keys/${id}`, { method: "DELETE" }); loadKeys(); }
+-    catch (e: any) { setMessage(e.message); }
++    try {
++      await api(`/api/auth/api-keys/${id}`, { method: "DELETE" });
++      toast.success("Đã xoá API key");
++      loadKeys();
++    } catch (e: any) { toast.error(e.message); }
+   };
+ 
+   const submitTts = async () => {
+     if (!ttsText.trim() || !ttsVoice) return;
+     setTtsLoading(true);
+     setTtsResult(null);
+-    setMessage("");
+     try {
+-      const res = await fetch("/api/tts/text", {
++      const blob = await api("/api/tts/text", {
+         method: "POST",
+-        headers: { "Authorization": `Bearer ${localStorage.getItem("token")}`, "Content-Type": "application/json" },
+         body: JSON.stringify({ text: ttsText, voice_id: parseInt(ttsVoice) }),
+       });
+-      if (!res.ok) {
+-        const err = await res.json().catch(() => ({}));
+-        if (res.status === 402) setMessage("Không đủ ký tự!");
+-        else setMessage(err.message || err.detail || `HTTP ${res.status}`);
+-        return;
+-      }
+-      const blob = await res.blob();
+       setTtsResult(URL.createObjectURL(blob));
++      toast.success("Tạo giọng nói thành công");
+       // Refresh profile for updated balance
+       setUser(await api("/api/auth/profile"));
+-    } catch (e: any) { setMessage(e.message); }
++    } catch (e: any) { toast.error(e.message); }
+     finally { setTtsLoading(false); }
+   };
+ 
+@@ -186,14 +178,6 @@ export default function DashboardPage() {
+           ))}
+         </div>
+ 
+-        {message && (
+-          <div className="flex items-center gap-2 bg-red-950/50 border border-red-900 text-red-400 text-sm rounded-lg px-4 py-2.5 mb-4">
+-            <HiExclamationTriangle className="w-4 h-4 shrink-0" />
+-            {message}
+-            <button onClick={() => setMessage("")} className="ml-auto text-red-600 hover:text-red-400">&times;</button>
+-          </div>
+-        )}
+-
+         {/* Overview */}
+         {tab === "overview" && user && (
+           <div className="space-y-6">
+@@ -223,8 +207,9 @@ export default function DashboardPage() {
+               <div className="space-y-3">
+                 <select
+                   value={ttsVoice}
++                  disabled={ttsLoading}
+                   onChange={(e) => { setTtsVoice(e.target.value); loadVoices(); }}
+-                  className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-sm text-white focus:outline-none focus:border-brand"
++                  className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-sm text-white focus:outline-none focus:border-brand disabled:opacity-50"
+                 >
+                   <option value="">Chọn giọng</option>
+                   {voices.map((v) => (
+@@ -233,10 +218,11 @@ export default function DashboardPage() {
+                 </select>
+                 <textarea
+                   value={ttsText}
++                  disabled={ttsLoading}
+                   onChange={(e) => setTtsText(e.target.value)}
+                   placeholder="Nhập nội dung cần chuyển giọng nói..."
+                   rows={4}
+-                  className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-brand resize-vertical"
++                  className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-brand resize-vertical disabled:opacity-50"
+                 />
+                 <div className="flex items-center gap-3">
+                   <button
+@@ -265,17 +251,17 @@ export default function DashboardPage() {
+         {/* API Keys */}
+         {tab === "keys" && (
+           <div className="space-y-4">
+-            <div className="flex items-center gap-3">
++            <form onSubmit={createKey} className="flex items-center gap-3">
+               <input
+                 value={newKeyName}
+                 onChange={(e) => setNewKeyName(e.target.value)}
+                 placeholder="Tên key (vd: Production)"
+                 className="flex-1 px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-lg text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-brand"
+               />
+-              <button onClick={createKey} className="inline-flex items-center gap-1.5 bg-brand text-black font-semibold px-4 py-2 rounded-lg hover:bg-emerald-400 transition-colors text-sm">
++              <button type="submit" className="inline-flex items-center gap-1.5 bg-brand text-black font-semibold px-4 py-2 rounded-lg hover:bg-emerald-400 transition-colors text-sm">
+                 <HiPlus className="w-3.5 h-3.5" /> Tạo key
+               </button>
+-            </div>
++            </form>
+ 
+             {newKeyDisplay && (
+               <div className="rounded-lg border border-brand/30 bg-brand/5 p-4">
+@@ -290,8 +276,8 @@ export default function DashboardPage() {
+               </div>
+             )}
+ 
+-            <div className="rounded-xl border border-zinc-800 overflow-hidden">
+-              <table className="w-full text-sm">
++            <div className="rounded-xl border border-zinc-800 overflow-x-auto">
++              <table className="w-full text-sm min-w-[500px]">
+                 <thead>
+                   <tr className="border-b border-zinc-800 bg-zinc-900/50">
+                     <th className="text-left px-4 py-3 text-zinc-500 font-medium">Tên</th>
+@@ -315,7 +301,7 @@ export default function DashboardPage() {
+                         </td>
+                         <td className="px-4 py-3 text-right">
+                           {k.is_active && (
+-                            <button onClick={() => deactivateKey(k.id)} className="text-zinc-500 hover:text-red-400 transition-colors">
++                            <button onClick={() => setShowConfirm(k.id)} className="text-zinc-500 hover:text-red-400 transition-colors">
+                               <HiTrash className="w-4 h-4" />
+                             </button>
+                           )}
+@@ -326,6 +312,43 @@ export default function DashboardPage() {
+                 </tbody>
+               </table>
+             </div>
++
++            <AnimatePresence>
++              {showConfirm !== null && (
++                <motion.div
++                  initial={{ opacity: 0 }}
++                  animate={{ opacity: 1 }}
++                  exit={{ opacity: 0 }}
++                  className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
++                  onClick={() => setShowConfirm(null)}
++                >
++                  <motion.div
++                    initial={{ scale: 0.9, opacity: 0 }}
++                    animate={{ scale: 1, opacity: 1 }}
++                    exit={{ scale: 0.9, opacity: 0 }}
++                    onClick={(e) => e.stopPropagation()}
++                    className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 max-w-sm w-full mx-4"
++                  >
++                    <h3 className="font-semibold text-sm mb-2">Xác nhận xoá</h3>
++                    <p className="text-sm text-zinc-400 mb-5">Bạn có chắc muốn xoá API key này? Hành động này không thể hoàn tác.</p>
++                    <div className="flex gap-3 justify-end">
++                      <button
++                        onClick={() => setShowConfirm(null)}
++                        className="px-4 py-2 text-sm text-zinc-400 hover:text-white transition-colors"
++                      >
++                        Huỷ
++                      </button>
++                      <button
++                        onClick={() => { const id = showConfirm; setShowConfirm(null); deactivateKey(id); }}
++                        className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-500 transition-colors"
++                      >
++                        Xoá
++                      </button>
++                    </div>
++                  </motion.div>
++                </motion.div>
++              )}
++            </AnimatePresence>
+           </div>
+         )}
+ 
+diff --git a/frontend/src/app/layout.tsx b/frontend/src/app/layout.tsx
+index f9e8905..b87f3fe 100644
+--- a/frontend/src/app/layout.tsx
++++ b/frontend/src/app/layout.tsx
+@@ -1,5 +1,6 @@
+ import type { Metadata } from "next";
+ import { Geist, Geist_Mono } from "next/font/google";
++import { Toaster } from "sonner";
+ import "./globals.css";
+ 
+ const geistSans = Geist({
+@@ -22,8 +23,12 @@ export default function RootLayout({
+ }: Readonly<{ children: React.ReactNode }>) {
+   return (
+     <html lang="vi" className={`${geistSans.variable} ${geistMono.variable}`}>
++        <head>
++          <meta httpEquiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; media-src 'self' blob:; img-src 'self' data:;" />
++        </head>
+       <body className="min-h-screen bg-zinc-950 text-zinc-100 font-sans antialiased">
+         {children}
++        <Toaster richColors closeButton position="top-right" />
+       </body>
+     </html>
+   );
+diff --git a/frontend/src/app/login/page.tsx b/frontend/src/app/login/page.tsx
+index a1f1942..2394f15 100644
+--- a/frontend/src/app/login/page.tsx
++++ b/frontend/src/app/login/page.tsx
+@@ -4,34 +4,29 @@ import { useState } from "react";
+ import { useRouter } from "next/navigation";
+ import Link from "next/link";
+ import { HiArrowRight } from "react-icons/hi2";
++import { api } from "@/lib/api";
++import { toast } from "sonner";
+ 
+ export default function LoginPage() {
+   const router = useRouter();
+   const [email, setEmail] = useState("");
+   const [password, setPassword] = useState("");
+-  const [error, setError] = useState("");
+   const [loading, setLoading] = useState(false);
+ 
+   const handleSubmit = async (e: React.FormEvent) => {
+     e.preventDefault();
+-    setError("");
+     setLoading(true);
+     try {
+-      const r = await fetch("/api/auth/login", {
++      const data = await api("/api/auth/login", {
+         method: "POST",
+-        headers: { "Content-Type": "application/json" },
+         body: JSON.stringify({ email, password }),
+       });
+-      const data = await r.json();
+-      if (!r.ok) {
+-        setError(data.message || data.detail || "Đăng nhập thất bại");
+-        return;
+-      }
+       localStorage.setItem("token", data.token);
+       localStorage.setItem("user", JSON.stringify(data.user));
++      toast.success("Đăng nhập thành công");
+       router.push(data.user.role === "admin" ? "/admin" : "/dashboard");
+-    } catch {
+-      setError("Lỗi kết nối đến server");
++    } catch (e: any) {
++      toast.error(e.message);
+     } finally {
+       setLoading(false);
+     }
+@@ -45,12 +40,6 @@ export default function LoginPage() {
+         </Link>
+         <p className="text-center text-zinc-500 text-sm mb-8">Đăng nhập vào tài khoản của bạn</p>
+ 
+-        {error && (
+-          <div className="bg-red-950/50 border border-red-900 text-red-400 text-sm rounded-lg px-4 py-2.5 mb-4">
+-            {error}
+-          </div>
+-        )}
+-
+         <form onSubmit={handleSubmit} className="space-y-4">
+           <div>
+             <label htmlFor="email" className="block text-sm text-zinc-400 mb-1.5">Email</label>
+diff --git a/frontend/src/app/signup/page.tsx b/frontend/src/app/signup/page.tsx
+index b7b107f..9c5618e 100644
+--- a/frontend/src/app/signup/page.tsx
++++ b/frontend/src/app/signup/page.tsx
+@@ -4,34 +4,29 @@ import { useState } from "react";
+ import { useRouter } from "next/navigation";
+ import Link from "next/link";
+ import { HiArrowRight } from "react-icons/hi2";
++import { api } from "@/lib/api";
++import { toast } from "sonner";
+ 
+ export default function SignupPage() {
+   const router = useRouter();
+   const [email, setEmail] = useState("");
+   const [password, setPassword] = useState("");
+-  const [error, setError] = useState("");
+   const [loading, setLoading] = useState(false);
+ 
+   const handleSubmit = async (e: React.FormEvent) => {
+     e.preventDefault();
+-    setError("");
+     setLoading(true);
+     try {
+-      const r = await fetch("/api/auth/signup", {
++      const data = await api("/api/auth/signup", {
+         method: "POST",
+-        headers: { "Content-Type": "application/json" },
+         body: JSON.stringify({ email, password }),
+       });
+-      const data = await r.json();
+-      if (!r.ok) {
+-        setError(data.message || data.detail || "Đăng ký thất bại");
+-        return;
+-      }
+       localStorage.setItem("token", data.token);
+       localStorage.setItem("user", JSON.stringify(data.user));
+-      router.push("/dashboard");
+-    } catch {
+-      setError("Lỗi kết nối đến server");
++      toast.success("Đăng ký thành công");
++      router.push(data.user.role === "admin" ? "/admin" : "/dashboard");
++    } catch (e: any) {
++      toast.error(e.message);
+     } finally {
+       setLoading(false);
+     }
+@@ -45,12 +40,6 @@ export default function SignupPage() {
+         </Link>
+         <p className="text-center text-zinc-500 text-sm mb-8">Tạo tài khoản mới</p>
+ 
+-        {error && (
+-          <div className="bg-red-950/50 border border-red-900 text-red-400 text-sm rounded-lg px-4 py-2.5 mb-4">
+-            {error}
+-          </div>
+-        )}
+-
+         <form onSubmit={handleSubmit} className="space-y-4">
+           <div>
+             <label htmlFor="email" className="block text-sm text-zinc-400 mb-1.5">Email</label>

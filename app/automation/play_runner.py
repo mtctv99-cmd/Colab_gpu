@@ -17,8 +17,9 @@ from datetime import timedelta
 
 logger = logging.getLogger(__name__)
 
-CELL_START_TIMEOUT_SECONDS = 30
-CELL_START_BACKOFF_MINUTES = 15
+CELL_START_TIMEOUT_SECONDS = 90
+CELL_START_BACKOFF_MINUTES = 10
+LOGIN_WATCH_TIMEOUT_SECONDS = 300
 
 
 # JS utilities for Playwright automation - injected via add_init_script
@@ -118,23 +119,72 @@ ROLE_WORKER = "worker"
 ROLE_LOGIN = "login"
 _active_pages: dict[str, Page] = {}
 _keepalive_tasks: dict[str, asyncio.Task] = {}
+_login_watchers: dict[str, asyncio.Task] = {}
 
 
 async def cleanup_zombie_browsers(kill_active: bool = False) -> int:
     """Kill Chromium/Chrome processes launched with this app's profile directory.
 
     If kill_active is False, keep currently tracked worker profile processes alive.
+    Supports Windows (PowerShell) and Linux (pgrep+kill).
     """
-    profiles_base = str(PROFILES_DIR).lower()
+    profiles_base = str(PROFILES_DIR)
     active_profiles = {
-        str(PROFILES_DIR / email).lower()
+        str(PROFILES_DIR / email)
         for email in _active_contexts.keys()
     }
     killed = 0
 
-    if not sys.platform.startswith("win"):
-        return killed
+    if sys.platform.startswith("win"):
+        return await _cleanup_zombies_win(profiles_base, active_profiles, kill_active)
+    else:
+        return await _cleanup_zombies_linux(profiles_base, active_profiles, kill_active)
 
+
+async def _cleanup_zombies_linux(profiles_base: str, active_profiles: set[str], kill_active: bool) -> int:
+    """Linux zombie cleanup via pgrep + /proc reading."""
+    killed = 0
+    try:
+        # Find all chrome/chromium processes with --colab-role flag
+        proc = await asyncio.create_subprocess_exec(
+            "pgrep", "-f", "chrom(e|ium).*--colab-role",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await proc.communicate()
+        if proc.returncode != 0:
+            return killed
+
+        pids = [p.strip() for p in stdout.decode().splitlines() if p.strip()]
+        for pid_str in pids:
+            try:
+                pid = int(pid_str)
+                # Read cmdline to check profile path
+                try:
+                    with open(f"/proc/{pid}/cmdline", "r", errors="ignore") as f:
+                        cmdline = f.read().replace("\0", " ")
+                except (FileNotFoundError, PermissionError):
+                    continue
+
+                cmd_lower = cmdline.lower()
+                if profiles_base.lower() not in cmd_lower:
+                    continue
+                if not kill_active and any(p.lower() in cmd_lower for p in active_profiles):
+                    continue
+
+                os.kill(pid, 9)
+                killed += 1
+                logger.info("Killed zombie browser PID=%s (Linux)", pid)
+            except (ValueError, OSError):
+                continue
+    except FileNotFoundError:
+        logger.debug("pgrep not found, skipping zombie cleanup")
+    except Exception as exc:
+        logger.warning("cleanup_zombies_linux failed: %s", exc)
+    return killed
+
+
+async def _cleanup_zombies_win(profiles_base: str, active_profiles: set[str], kill_active: bool) -> int:
     try:
         proc = await asyncio.create_subprocess_exec(
             "powershell",
@@ -178,7 +228,7 @@ async def cleanup_zombie_browsers(kill_active: bool = False) -> int:
             killed += 1
             logger.info("Killed zombie browser process PID=%s", pid)
     except Exception as exc:
-        logger.warning("cleanup_zombie_browsers failed: %s", exc)
+        logger.warning("cleanup_zombies_win failed: %s", exc)
 
     return killed
 
@@ -981,11 +1031,48 @@ async def _trigger_run_all(page, email) -> bool:
     return False
 
 
+async def _check_google_session_for(email: str, ctx: BrowserContext) -> bool:
+    """Check whether Google session cookies exist for this account's profile.
+
+    Returns True if valid Google session cookies (SID/SAPISID) are present.
+    """
+    try:
+        cookies = await ctx.cookies("https://accounts.google.com")
+        names = {c.get("name") for c in cookies}
+        has_session = "SID" in names and ("SAPISID" in names or "HSID" in names)
+        if not has_session:
+            logger.warning("No valid Google session found in profile for %s", email)
+        return has_session
+    except Exception as e:
+        logger.debug("Session check failed for %s: %s", email, e)
+        return False
+
+
 async def start_colab_worker(email: str, server_url: str) -> None:
     """Start a Colab worker: open the notebook, select GPU T4, fill configuration, run-all, and keep-alive."""
     profile_dir = str(PROFILES_DIR / email)
     if not Path(profile_dir).exists():
         raise RuntimeError(f"No profile found for {email}. Login first.")
+
+    # Check Google session cookies before launching headed browser
+    # Brief headless check first — avoids flashing a headed window on stale session.
+    check_pw = await async_playwright().start()
+    try:
+        check_ctx = await check_pw.chromium.launch_persistent_context(
+            user_data_dir=profile_dir,
+            headless=True,
+            args=["--no-sandbox", "--disable-setuid-sandbox"],
+        )
+        has_session = await _check_google_session_for(email, check_ctx)
+        await check_ctx.close()
+        await check_pw.stop()
+        if not has_session:
+            raise RuntimeError(f"Google session expired for {email}. Needs re-login.")
+        logger.info("Google session valid for %s", email)
+    except RuntimeError:
+        raise
+    except Exception as e:
+        logger.warning("Session pre-check failed for %s (proceeding anyway): %s", email, e)
 
     pw = await async_playwright().start()
     context = None
@@ -1112,11 +1199,15 @@ async def start_colab_worker(email: str, server_url: str) -> None:
                         runAnyway.click();
                         console.log('[Antigravity-KeepAlive] Dismissed Run anyway dialog');
                     }
-                    const okBtn = document.querySelector('paper-button#ok, colab-dialog paper-button, md-filled-button[id*="ok"]');
+                    const okBtn = document.querySelector('paper-button#ok, colab-dialog paper-button, md-filled-button[id*="ok"], md-text-button[id*="ok"]');
                     if (okBtn) {
                         okBtn.click();
                         console.log('[Antigravity-KeepAlive] Dismissed alert dialog');
                     }
+                    // Additional check for "Reconnect" button which sometimes appears
+                    const reconnectBtn = Array.from(document.querySelectorAll('paper-button, md-text-button'))
+                        .find(el => (el.innerText || '').includes('Reconnect'));
+                    if (reconnectBtn) reconnectBtn.click();
                 }, 30000);
             }""")
             logger.info("Keep-Alive JS injected successfully for %s", email)

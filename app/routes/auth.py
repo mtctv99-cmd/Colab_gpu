@@ -2,6 +2,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
@@ -97,7 +98,7 @@ async def signup(req: SignupRequest, db: AsyncSession = Depends(get_db)):
     await db.refresh(user)
 
     token = create_access_token({"user_id": user.id, "role": user.role})
-    return {"token": token, "user": {"id": user.id, "email": user.email, "role": user.role, "balance": user.balance}}
+    return {"token": token, "user": {"id": user.id, "email": user.email, "role": user.role, "balance": user.balance, "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None}}
 
 
 # ── Brute force protection ────────────────────────────────────
@@ -112,6 +113,7 @@ def _check_login_rate(email: str):
     attempts = _login_attempts.get(email, [])
     attempts = [t for t in attempts if now - t < _LOGIN_WINDOW_SECONDS]
     if len(attempts) >= _LOGIN_MAX_ATTEMPTS:
+        logger.warning("Brute force attempt detected for %s (%d failures)", email, len(attempts))
         raise HTTPException(status_code=429, detail="Too many login attempts. Try again in 5 minutes.")
     attempts.append(now)
     _login_attempts[email] = attempts
@@ -131,8 +133,16 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     _clear_login_rate(req.email)
+    user.last_login_at = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+    await db.commit()
+
     token = create_access_token({"user_id": user.id, "role": user.role})
-    return {"token": token, "user": {"id": user.id, "email": user.email, "role": user.role, "balance": user.balance}}
+
+    remaining = max(0, _LOGIN_MAX_ATTEMPTS - len(_login_attempts.get(req.email, [])))
+    return JSONResponse(
+        content={"token": token, "user": {"id": user.id, "email": user.email, "role": user.role, "balance": user.balance, "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None}},
+        headers={"X-RateLimit-Remaining": str(remaining)},
+    )
 
 
 # ── Change password ───────────────────────────────────────────
@@ -159,6 +169,7 @@ async def get_profile(user: User = Depends(require_user), db: AsyncSession = Dep
         "email": user.email,
         "role": user.role,
         "balance": user.balance,
+        "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
     }
 
 
@@ -215,28 +226,108 @@ async def admin_topup(req: AdminTopupRequest, admin: User = Depends(require_admi
     return {"email": user.email, "new_balance": user.balance, "added": req.amount}
 
 
-# ── Webhook: auto top-up (payment callback) ────────────────────
-class WebhookTopupRequest(BaseModel):
+# ── Admin: create user ─────────────────────────────────────────
+class CreateUserRequest(BaseModel):
     email: str
-    amount: int
-    secret: str = ""
+    password: str
+    role: str = "user"
 
-@router.post("/webhook/topup")
-async def webhook_topup(req: WebhookTopupRequest, db: AsyncSession = Depends(get_db)):
-    import os
-    webhook_secret = os.getenv("WEBHOOK_SECRET", "")
-    if webhook_secret and req.secret != webhook_secret:
-        raise HTTPException(status_code=401, detail="Invalid secret")
-    if req.amount <= 0:
-        raise HTTPException(status_code=400, detail="Amount must be positive")
-    result = await db.execute(select(User).where(User.email == req.email))
-    user = result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    user.balance += req.amount
+@router.post("/admin/users")
+async def admin_create_user(req: CreateUserRequest, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    if len(req.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    existing = await db.execute(select(User).where(User.email == req.email))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Email already registered")
+    user = User(email=req.email, password_hash=hash_password(req.password), role=req.role)
+    db.add(user)
     await db.commit()
     await db.refresh(user)
-    return {"email": user.email, "new_balance": user.balance, "added": req.amount}
+    return {"id": user.id, "email": user.email, "role": user.role, "balance": user.balance}
+
+
+# ── Admin: delete user ─────────────────────────────────────────
+@router.delete("/admin/users/{user_id}")
+async def admin_delete_user(user_id: int, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    if admin.id == user_id:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    await db.delete(user)
+    await db.commit()
+    return {"detail": "Deleted"}
+
+
+# ── Admin: update user ─────────────────────────────────────────
+class UpdateUserRequest(BaseModel):
+    balance: int | None = None
+    role: str | None = None
+    is_active: bool | None = None
+
+@router.put("/admin/users/{user_id}")
+async def admin_update_user(user_id: int, req: UpdateUserRequest, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if req.balance is not None:
+        user.balance = req.balance
+    if req.role is not None:
+        user.role = req.role
+    if req.is_active is not None:
+        user.is_active = req.is_active
+    await db.commit()
+    return {"id": user.id, "email": user.email, "role": user.role, "balance": user.balance, "is_active": user.is_active}
+
+
+# ── Admin: list all API keys ────────────────────────────────────
+@router.get("/admin/api-keys")
+async def admin_list_api_keys(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(ApiKey, User.email).join(User, ApiKey.user_id == User.id).order_by(ApiKey.created_at.desc())
+    )
+    return [
+        {
+            "id": k.ApiKey.id,
+            "key_prefix": k.ApiKey.key_prefix,
+            "name": k.ApiKey.name,
+            "is_active": k.ApiKey.is_active,
+            "user_id": k.ApiKey.user_id,
+            "user_email": k.email,
+            "created_at": k.ApiKey.created_at.isoformat() if k.ApiKey.created_at else None,
+            "last_used_at": k.ApiKey.last_used_at.isoformat() if k.ApiKey.last_used_at else None,
+        }
+        for k in result.all()
+    ]
+
+
+# ── Admin: create API key for any user ─────────────────────────
+class AdminCreateApiKeyRequest(BaseModel):
+    user_id: int
+    name: str = "Default"
+
+@router.post("/admin/api-keys")
+async def admin_create_api_key(req: AdminCreateApiKeyRequest, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    user = await db.get(User, req.user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    raw, prefix, hashed = generate_api_key()
+    ak = ApiKey(user_id=req.user_id, key_prefix=prefix, key_hash=hashed, name=req.name)
+    db.add(ak)
+    await db.commit()
+    return {"key": raw, "key_prefix": prefix, "name": req.name, "user_email": user.email, "message": "Save the key now — it won't be shown again"}
+
+
+# ── Admin: hard delete API key ──────────────────────────────────
+@router.delete("/admin/api-keys/{key_id}")
+async def admin_delete_api_key(key_id: int, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(ApiKey).where(ApiKey.id == key_id))
+    ak = result.scalar_one_or_none()
+    if not ak:
+        raise HTTPException(status_code=404, detail="API key not found")
+    await db.delete(ak)
+    await db.commit()
+    return {"detail": "Deleted"}
 
 
 # ── Usage history ──────────────────────────────────────────────

@@ -11,8 +11,9 @@ from sqlalchemy import select, update, func
 
 from app.database import async_session
 from app.models import GoogleAccount, Task
-from app.config import QUOTA_RESET_HOURS, WORKER_MAX_LIFETIME
+from app.config import QUOTA_RESET_HOURS, WORKER_MAX_LIFETIME, PROFILES_DIR
 from app.automation import play_runner
+from pathlib import Path as _Path
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +27,8 @@ _pending_direct_events: dict[str, asyncio.Event] = {}
 SCALE_UP_PENDING_PER_WORKER = 5
 SCALE_UP_DELAY_SECONDS = 10
 MAX_CONCURRENT_WORKERS = 4
-SCALE_DOWN_IDLE_SECONDS = 300
-KEEP_WARM_WORKERS = 0
+SCALE_DOWN_IDLE_SECONDS = 1800  # 30 minutes idle before scale down
+KEEP_WARM_WORKERS = 1          # Always keep at least 1 worker running
 
 _scale_up_requested_at = None
 _batch_request_count = 0
@@ -61,6 +62,17 @@ async def broadcast_to_dashboard(msg: dict):
             _dashboard_clients.remove(d)
 
 
+# Global background task tracking to prevent leaks
+_background_tasks: set[asyncio.Task] = set()
+
+def _safe_create_task(coro) -> asyncio.Task:
+    """Create a task and track it to prevent GC or leaks."""
+    t = asyncio.create_task(coro)
+    _background_tasks.add(t)
+    t.add_done_callback(_background_tasks.discard)
+    return t
+
+
 class ConnectionManager:
     def __init__(self):
         self.active: dict[str, WebSocket] = {}
@@ -74,16 +86,28 @@ class ConnectionManager:
         self.worker_info[email] = {
             "gpu": gpu,
             "connected_at": now,
-            "status": "READY",
+            "status": "LOADING",  # Explicitly show loading state while loading models
             "last_pong": time.time(),
             "expiring": False,
             "uptime": 0,
         }
-        logger.info("Worker connected: %s (GPU: %s)", email, gpu)
+        logger.info("Worker connected and loading models: %s (GPU: %s)", email, gpu)
+
+        # Update DB to reflect LOADING state
+        try:
+            async with async_session() as db:
+                await db.execute(
+                    update(GoogleAccount).where(GoogleAccount.email == email)
+                    .values(status="LOADING", last_active=now)
+                )
+                await db.commit()
+        except Exception as e:
+            logger.error("Failed to update status to LOADING: %s", e)
+
         if self.heartbeat_task is None or self.heartbeat_task.done():
-            self.heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+            self.heartbeat_task = _safe_create_task(self._heartbeat_loop())
         if self.lifecycle_task is None or self.lifecycle_task.done():
-            self.lifecycle_task = asyncio.create_task(self._worker_lifecycle_loop())
+            self.lifecycle_task = _safe_create_task(self._worker_lifecycle_loop())
 
     def disconnect(self, email: str):
         self.active.pop(email, None)
@@ -122,22 +146,69 @@ class ConnectionManager:
                 candidates.append((email, info.get("expiring", False)))
         if not candidates:
             return None
+        # Prioritize non-expiring workers
         candidates.sort(key=lambda x: x[1])
         return candidates[0][0]
 
     async def _heartbeat_loop(self):
+        """Real-time heartbeat: ping every 15s, detect dead workers, scale up immediately."""
         try:
             while True:
-                await asyncio.sleep(45)
-                if not self.active:
-                    continue
+                await asyncio.sleep(15)
+                now = time.time()
+                dead_workers = []
+
                 for email in list(self.active.keys()):
                     ws = self.active.get(email)
-                    if ws:
-                        try:
-                            await ws.send_json({"action": "ping"})
-                        except Exception:
-                            pass
+                    info = self.worker_info.get(email)
+                    if not ws or not info:
+                        continue
+
+                    # Check last pong — if > 60s stale, mark dead
+                    last_pong = info.get("last_pong", 0)
+                    if last_pong and (now - last_pong) > 60:
+                        logger.warning("❤️‍🩹 Worker %s heartbeat lost (%.0fs stale). Marking DEAD.", email, now - last_pong)
+                        dead_workers.append(email)
+                        continue
+
+                    # Send ping
+                    try:
+                        await ws.send_json({"action": "ping"})
+                    except Exception:
+                        logger.warning("❤️‍🩹 Worker %s send failed. Marking DEAD.", email)
+                        dead_workers.append(email)
+
+                for email in dead_workers:
+                    # Force disconnect — cleanup will trigger scale-up
+                    try:
+                        ws = self.active.get(email)
+                        if ws:
+                            await ws.close(code=1001)
+                    except Exception:
+                        pass
+                    self.disconnect(email)
+
+                    # Mark account OFFLINE in DB
+                    try:
+                        async with async_session() as db:
+                            res = await db.execute(select(GoogleAccount).where(GoogleAccount.email == email))
+                            acc = res.scalar_one_or_none()
+                            if acc and acc.status == "ACTIVE":
+                                acc.status = "OFFLINE"
+                                await db.commit()
+                                # Reset any PROCESSING tasks
+                                await db.execute(
+                                    update(Task).where(Task.worker_id == acc.id, Task.status == "PROCESSING")
+                                    .values(status="PENDING", worker_id=None)
+                                )
+                                await db.commit()
+                    except Exception as e:
+                        logger.error("Dead worker cleanup error: %s", e)
+
+                    # Scale up replacement immediately
+                    _safe_create_task(_maybe_scale_up())
+                    await broadcast_to_dashboard({"event": "worker_disconnected", "email": email, "reason": "heartbeat_timeout"})
+
         except asyncio.CancelledError:
             pass
 
@@ -146,35 +217,50 @@ class ConnectionManager:
         logger.info("Lifecycle loop started (max=%ss)", WORKER_MAX_LIFETIME)
         try:
             while True:
-                await asyncio.sleep(60)
+                await asyncio.sleep(15)  # Faster check for smoother handover
                 now = datetime.now(timezone.utc)
                 for email in list(self.active.keys()):
                     info = self.worker_info.get(email)
                     if not info:
                         continue
+
                     async with async_session() as db:
                         res = await db.execute(select(GoogleAccount).where(GoogleAccount.email == email))
                         acc = res.scalar_one_or_none()
                         if not acc or not acc.started_at:
                             continue
+
                         sa = acc.started_at
                         if sa.tzinfo is None:
                             sa = sa.replace(tzinfo=timezone.utc)
+
                         uptime = (now - sa).total_seconds()
                         info["uptime"] = uptime
+
+                        # 1. Trigger rotation if lifetime reached
                         if uptime >= WORKER_MAX_LIFETIME and not info.get("expiring"):
-                            logger.info("Worker %s reached max lifetime (%.1fh). Triggering handover.", email, uptime/3600)
+                            logger.info("🕒 Worker %s expired (%.1fh). Starting replacement...", email, uptime/3600)
                             info["expiring"] = True
-                            asyncio.create_task(_try_auto_rotate())
+                            _safe_create_task(_try_auto_rotate())
                             await broadcast_to_dashboard({"event": "worker_expiring", "email": email})
-                        if info.get("expiring") and info.get("status") == "IDLE" and len(self.active) > 1:
-                            ready_replacement = any(
-                                e != email and self.worker_info.get(e, {}).get("status") in ("IDLE", "BUSY") and not self.worker_info.get(e, {}).get("expiring", False)
+
+                        # 2. Check if handover can complete (new worker must be READY/IDLE)
+                        if info.get("expiring") and info.get("status") == "IDLE":
+                            # Look for a replacement that is NOT expiring and is already IDLE
+                            has_ready_replacement = any(
+                                e != email and
+                                self.worker_info.get(e, {}).get("status") == "IDLE" and
+                                not self.worker_info.get(e, {}).get("expiring", False)
                                 for e in self.active
                             )
-                            if ready_replacement:
-                                logger.info("Graceful handover: stopping expired worker %s", email)
-                                asyncio.create_task(stop_expired_worker(email))
+
+                            if has_ready_replacement:
+                                logger.info("✅ Replacement ready. Stopping expired worker %s gracefully.", email)
+                                _safe_create_task(stop_expired_worker(email))
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error("Lifecycle loop error: %s", e)
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -214,17 +300,26 @@ async def websocket_worker(ws: WebSocket):
             res = await db.execute(select(GoogleAccount).where(GoogleAccount.email == email))
             account = res.scalar_one_or_none()
             if account:
+                # Worker has just finished loading models and is registering
+                now = datetime.now(timezone.utc)
+
+                # Set DB status to ACTIVE (idle/ready)
                 account.status = "ACTIVE"
-                if not account.started_at:
-                    account.started_at = datetime.now(timezone.utc)
-                else:
-                    sa = account.started_at
-                    if sa.tzinfo is None:
-                        sa = sa.replace(tzinfo=timezone.utc)
-                    if (datetime.now(timezone.utc) - sa).total_seconds() > 3600 * 5:
-                        account.started_at = datetime.now(timezone.utc)
-                account.last_active = datetime.now(timezone.utc)
+                sa = account.started_at
+                if sa and sa.tzinfo is None:
+                    sa = sa.replace(tzinfo=timezone.utc)
+
+                # Reset started_at if fresh session (from OFFLINE or stale)
+                if not sa or account.status in ("OFFLINE", "NEEDS_LOGIN", "LOADING") or (now - sa).total_seconds() > 3600 * 4:
+                    account.started_at = now
+                    logger.info("Reset started_at for %s (fresh session)", email)
+                account.last_active = now
                 await db.commit()
+
+                # Sync in-memory status to IDLE after registration
+                if email in manager.worker_info:
+                    manager.worker_info[email]["status"] = "IDLE"
+                logger.info("Worker ready (IDLE): %s", email)
         await manager.broadcast_status({"event": "worker_connected", "email": email, "gpu": gpu})
         while True:
             data = await ws.receive_json()
@@ -238,11 +333,18 @@ async def websocket_worker(ws: WebSocket):
                     manager.worker_info[email].pop("idle_since", None)
                 await _handle_status(email, new_status)
             elif action == "task_completed":
-                await _handle_task_completed(data.get("task_id"))
+                await _handle_task_completed(data.get("task_id"), email)
             elif action == "task_failed":
-                await _handle_task_failed(data.get("task_id"), data.get("error", "Unknown"))
+                await _handle_task_failed(data.get("task_id"), data.get("error", "Unknown"), email)
             elif action == "pong":
-                pass
+                if email in manager.worker_info:
+                    manager.worker_info[email]["last_pong"] = time.time()
+            elif action == "pong_status":
+                if email in manager.worker_info:
+                    manager.worker_info[email]["last_pong"] = time.time()
+                    new_status = data.get("status", "IDLE")
+                    manager.worker_info[email]["status"] = new_status
+                    await _handle_status(email, new_status)
     except WebSocketDisconnect:
         pass
     except Exception as exc:
@@ -271,24 +373,41 @@ async def websocket_worker(ws: WebSocket):
             async with async_session() as db:
                 res = await db.execute(select(func.count()).select_from(Task).where(Task.status == "PENDING"))
                 if (res.scalar() or 0) > 0:
-                    asyncio.create_task(_maybe_scale_up())
+                    _safe_create_task(_maybe_scale_up())
             await manager.broadcast_status({"event": "worker_disconnected", "email": email})
 
 
 async def _handle_status(email: str, status: str):
-    if status == "OUT_OF_QUOTA":
-        async with async_session() as db:
-            res = await db.execute(select(GoogleAccount).where(GoogleAccount.email == email))
-            acc = res.scalar_one_or_none()
-            if acc:
+    """Sync real-time worker status (IDLE, BUSY, OUT_OF_QUOTA) to the Database."""
+    db_status = "ACTIVE"
+    if status == "IDLE":
+        db_status = "ACTIVE"
+    elif status == "BUSY":
+        db_status = "BUSY"
+    elif status == "OUT_OF_QUOTA":
+        db_status = "COOLDOWN"
+
+    async with async_session() as db:
+        res = await db.execute(select(GoogleAccount).where(GoogleAccount.email == email))
+        acc = res.scalar_one_or_none()
+        if acc:
+            if status == "OUT_OF_QUOTA":
                 acc.status = "COOLDOWN"
                 acc.quota_reset_at = datetime.now(timezone.utc) + timedelta(hours=QUOTA_RESET_HOURS)
+                # Reset processing tasks
                 await db.execute(update(Task).where(Task.worker_id == acc.id, Task.status == "PROCESSING").values(status="PENDING", worker_id=None))
                 await db.commit()
-        asyncio.create_task(play_runner.stop_colab_worker(email))
-        asyncio.create_task(_try_auto_rotate())
-    elif status == "IDLE":
-        asyncio.create_task(_try_dispatch_next_task(email))
+                _safe_create_task(play_runner.stop_colab_worker(email))
+                _safe_create_task(_try_auto_rotate())
+            else:
+                # Update DB status to match current activity
+                acc.status = db_status
+                acc.last_active = datetime.now(timezone.utc)
+                await db.commit()
+
+    if status == "IDLE":
+        _safe_create_task(_try_dispatch_next_task(email))
+
     await manager.broadcast_status({"event": "worker_status", "email": email, "status": status})
 
 
@@ -301,10 +420,16 @@ async def _try_dispatch_next_task(email: str):
             await _dispatch_task(task, email, db)
 
 
-async def _handle_task_completed(tid: str):
+async def _handle_task_completed(tid: str, email: str):
     async with async_session() as db:
         t = await db.get(Task, tid)
         if t:
+            # Verify ownership
+            res = await db.execute(select(GoogleAccount).where(GoogleAccount.email == email))
+            acc = res.scalar_one_or_none()
+            if not acc or t.worker_id != acc.id:
+                logger.warning("Task %s ownership mismatch: worker %s != account %s", tid, t.worker_id, getattr(acc, 'id', None))
+                return
             t.status = "COMPLETED"
             t.completed_at = datetime.now(timezone.utc)
             await db.commit()
@@ -314,10 +439,16 @@ async def _handle_task_completed(tid: str):
     await manager.broadcast_status({"event": "task_completed", "task_id": tid})
 
 
-async def _handle_task_failed(tid: str, err: str):
+async def _handle_task_failed(tid: str, err: str, email: str):
     async with async_session() as db:
         t = await db.get(Task, tid)
         if t:
+            # Verify ownership
+            res = await db.execute(select(GoogleAccount).where(GoogleAccount.email == email))
+            acc = res.scalar_one_or_none()
+            if not acc or t.worker_id != acc.id:
+                logger.warning("Task %s ownership mismatch for failure: worker %s != account %s", tid, t.worker_id, getattr(acc, 'id', None))
+                return
             t.status = "FAILED"
             t.error_message = err
             t.completed_at = datetime.now(timezone.utc)
@@ -371,11 +502,17 @@ async def _try_auto_rotate():
             await play_runner.start_colab_worker(email, cfg.SERVER_URL)
         except Exception as e:
             logger.error("Rotation failed for %s: %s", email, e)
+            error_msg = str(e)
             async with async_session() as db:
                 res = await db.execute(select(GoogleAccount).where(GoogleAccount.email == email))
                 acc = res.scalar_one_or_none()
                 if acc:
-                    acc.status = "OFFLINE"
+                    if "session expired" in error_msg.lower() or "needs re-login" in error_msg.lower() or "needs login" in error_msg.lower():
+                        acc.status = "NEEDS_LOGIN"
+                        acc.quota_reset_at = None
+                        logger.warning("Account %s marked NEEDS_LOGIN due to expired session", email)
+                    else:
+                        acc.status = "OFFLINE"
                 await db.commit()
 
 
@@ -387,9 +524,9 @@ async def _maybe_scale_up():
         pending = res.scalar() or 0
     active = len(manager.active)
     if active == 0 and pending > 0:
-        asyncio.create_task(_try_auto_rotate())
+        _safe_create_task(_try_auto_rotate())
     elif pending > SCALE_UP_PENDING_PER_WORKER * active:
-        asyncio.create_task(_try_auto_rotate())
+        _safe_create_task(_try_auto_rotate())
 
 
 async def _on_batch_request():
@@ -399,17 +536,19 @@ async def _on_batch_request():
     _batch_request_count += 1
     if _batch_request_count >= SCALE_UP_BATCH_THRESHOLD:
         _batch_request_count = 0
-        asyncio.create_task(_try_auto_rotate())
+        _safe_create_task(_try_auto_rotate())
 
 
 async def _maintenance_loop():
-    """Background loop every 30s: reset stale CONNECTING, proactive scale-up, scale-down idle."""
-    STALE_CONNECTING_TIMEOUT = 120
+    """30s loop: stale CONNECTING reset, scale-up/down, session check."""
+    STALE_CONNECTING_TIMEOUT = 300
+    SESSION_CHECK_INTERVAL = 30 * 60  # every 30 minutes
+    _last_session_check = 0.0
     while True:
         await asyncio.sleep(30)
         now = datetime.now(timezone.utc)
 
-        # 1. Reset stale CONNECTING accounts (browser opened but WS never connected)
+        # 1. Reset stale CONNECTING accounts
         async with async_session() as db:
             stale_cutoff = now - timedelta(seconds=STALE_CONNECTING_TIMEOUT)
             result = await db.execute(
@@ -423,16 +562,16 @@ async def _maintenance_loop():
                 acc.status = "OFFLINE"
             await db.commit()
 
-        # 2. Proactive scale-up when pending pile up (not just on task creation)
+        # 2. Proactive scale-up
         if not _rotate_lock.locked() and len(manager.active) < MAX_CONCURRENT_WORKERS:
             async with async_session() as db:
                 res = await db.execute(select(func.count()).select_from(Task).where(Task.status == "PENDING"))
                 pending = res.scalar() or 0
             active = len(manager.active)
             if active == 0 and pending > 0:
-                asyncio.create_task(_try_auto_rotate())
+                _safe_create_task(_try_auto_rotate())
             elif pending > SCALE_UP_PENDING_PER_WORKER * active:
-                asyncio.create_task(_try_auto_rotate())
+                _safe_create_task(_try_auto_rotate())
 
         # 3. Scale-down idle workers
         if len(manager.active) > KEEP_WARM_WORKERS:
@@ -445,5 +584,63 @@ async def _maintenance_loop():
                         idle_since = info.get("idle_since") or info.get("connected_at") or now
                         if (now - idle_since).total_seconds() > SCALE_DOWN_IDLE_SECONDS:
                             logger.info("Scale-down: stopping idle worker %s", em)
-                            asyncio.create_task(stop_expired_worker(em))
+                            _safe_create_task(stop_expired_worker(em))
                             break
+
+        # 4. Periodic Google session check for all OFFLINE/ACTIVE accounts
+        if now.timestamp() - _last_session_check > SESSION_CHECK_INTERVAL:
+            _last_session_check = now.timestamp()
+            _safe_create_task(_check_all_account_sessions())
+
+
+async def _check_all_account_sessions():
+    """Check Google session cookies for all accounts every 30 minutes.
+
+    Runs headless Playwright check for each account's profile.
+    If a session has expired, marks the account NEEDS_LOGIN so auto-rotate
+    won't try to start it (wasting resources on a headed browser that
+    would just show a login page).
+    """
+    logger.info("Starting periodic Google session check for all accounts...")
+    async with async_session() as db:
+        result = await db.execute(
+            select(GoogleAccount).where(GoogleAccount.status.in_(["OFFLINE", "ACTIVE", "CONNECTING"]))
+        )
+        accounts = result.scalars().all()
+
+    if not accounts:
+        return
+
+    from playwright.async_api import async_playwright
+
+    for acc in accounts:
+        profile_dir = str(PROFILES_DIR / acc.email)
+        if not _Path(profile_dir).exists():
+            continue
+
+        try:
+            pw = await async_playwright().start()
+            ctx = await pw.chromium.launch_persistent_context(
+                user_data_dir=profile_dir,
+                headless=True,
+                args=["--no-sandbox", "--disable-setuid-sandbox"],
+            )
+            cookies = await ctx.cookies("https://accounts.google.com")
+            await ctx.close()
+            await pw.stop()
+
+            names = {c.get("name") for c in cookies}
+            has_session = "SID" in names and ("SAPISID" in names or "HSID" in names)
+
+            if not has_session:
+                logger.warning("Session expired for %s — marking NEEDS_LOGIN", acc.email)
+                async with async_session() as db2:
+                    acc2 = await db2.get(GoogleAccount, acc.id)
+                    if acc2:
+                        acc2.status = "NEEDS_LOGIN"
+                        acc2.quota_reset_at = None
+                        await db2.commit()
+        except Exception as e:
+            logger.debug("Session check failed for %s: %s", acc.email, e)
+
+    logger.info("Periodic session check complete.")

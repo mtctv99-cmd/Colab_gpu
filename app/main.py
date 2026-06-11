@@ -34,10 +34,13 @@ async def _start_cloudflare_tunnel():
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
-        
+
         # Read the tunnel URL asynchronously from stdout
-        async for line in _tunnel_process.stdout:  # type: ignore[union-attr]
-            line_str = line.decode().strip()
+        while True:
+            line_bytes = await _tunnel_process.stdout.readline()
+            if not line_bytes:
+                break
+            line_str = line_bytes.decode(errors="ignore").strip()
             if "trycloudflare.com" in line_str:
                 # Find the URL containing trycloudflare.com
                 for word in line_str.split():
@@ -101,8 +104,8 @@ async def lifespan(app: FastAPI):
     # Auto-pickup: Start a worker immediately if enabled
     from app.config import AUTO_PICKUP_ENABLED
     if AUTO_PICKUP_ENABLED:
-        logger.info("Auto-pickup enabled. Starting initial worker...")
-        asyncio.create_task(_try_auto_rotate())
+        logger.info("Auto-pickup enabled. Waiting for Cloudflare tunnel before starting initial worker...")
+        asyncio.create_task(_delayed_auto_pickup())
 
     yield
 
@@ -113,12 +116,28 @@ async def lifespan(app: FastAPI):
     logger.info("Server shutting down.")
 
 
+async def _delayed_auto_pickup():
+    """Delay auto-pickup until Cloudflare tunnel is ready (max 120s)."""
+    from app.config import SERVER_URL, CLOUDFLARED_ENABLED
+    for i in range(24):
+        if not CLOUDFLARED_ENABLED:
+            break
+        if "localhost" not in SERVER_URL and "127.0.0.1" not in SERVER_URL:
+            logger.info("Cloudflare tunnel ready: %s", SERVER_URL)
+            break
+        await asyncio.sleep(5)
+    else:
+        logger.warning("Cloudflare tunnel not ready after 120s, proceeding with %s", SERVER_URL)
+    from app.routes.ws import _try_auto_rotate
+    await _try_auto_rotate()
+
+
 
 app = FastAPI(title="Clone TTS", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"http://localhost:.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -178,19 +197,7 @@ async def get_config():
     return {"google_client_id": GOOGLE_CLIENT_ID}
 
 
-# HTML page routes (extension-less fallback to .html)
-from pathlib import Path as _Path
-from fastapi.responses import FileResponse
-
-_HTML_DIR = STATIC_DIR
-_PAGE_FILES = {"/login": "login.html", "/signup": "signup.html", "/dashboard": "dashboard.html"}
-
-for _route, _file in _PAGE_FILES.items():
-    _path_obj = _HTML_DIR / _file
-    if _path_obj.exists():
-        app.add_api_route(_route, lambda f=_path_obj: FileResponse(str(f), headers={"Cache-Control": "no-cache, no-store, must-revalidate"}), methods=["GET"], include_in_schema=False)
-
-# Serve static files (admin dashboard at /admin/, landing at /)
+# Serve static files (admin dashboard at /admin/)
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 
 

@@ -1,11 +1,12 @@
-from fastapi import APIRouter
+from app.routes.auth import require_admin
+from fastapi import APIRouter, Depends
 from sqlalchemy import select, func
 from datetime import datetime, timezone
 from app.database import async_session
 from app.models import Task, GoogleAccount
 from app.routes.ws import manager
 
-router = APIRouter(prefix="/api/health", tags=["health"])
+router = APIRouter(prefix="/api/health", tags=["health"], dependencies=[Depends(require_admin)])
 
 
 @router.get("")
@@ -51,10 +52,12 @@ async def stats():
         completed = await db.execute(select(func.count()).select_from(Task).where(Task.status == "COMPLETED"))
         failed = await db.execute(select(func.count()).select_from(Task).where(Task.status == "FAILED"))
         pending = await db.execute(select(func.count()).select_from(Task).where(Task.status == "PENDING"))
+        processing = await db.execute(select(func.count()).select_from(Task).where(Task.status == "PROCESSING"))
     return {
         "total_tasks": total.scalar() or 0,
         "completed": completed.scalar() or 0,
         "failed": failed.scalar() or 0,
         "pending": pending.scalar() or 0,
+        "processing": processing.scalar() or 0,
         "active_workers": len(manager.active),
     }

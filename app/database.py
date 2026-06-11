@@ -43,6 +43,7 @@ async def init_db():
         "ALTER TABLE tasks ADD COLUMN language VARCHAR",
         "ALTER TABLE google_accounts ADD COLUMN started_at DATETIME",
         "ALTER TABLE tasks ADD COLUMN user_id INTEGER REFERENCES users(id)",
+        "ALTER TABLE users ADD COLUMN last_login_at DATETIME",
         "CREATE INDEX IF NOT EXISTS ix_usage_records_user_id ON usage_records(user_id)",
     ]
     for sql in _MIGRATIONS:
