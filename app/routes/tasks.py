@@ -257,6 +257,7 @@ async def retry_task(task_id: str, _admin=Depends(require_admin), db: AsyncSessi
 async def _dispatch_task(task: Task, email: str, db: AsyncSession):
     """Send a PENDING task to an idle worker via WebSocket."""
     import app.config as config
+    import os
 
     task.status = "PROCESSING"
 
@@ -266,7 +267,9 @@ async def _dispatch_task(task: Task, email: str, db: AsyncSession):
     voice_url = f"{base}/api/voices/{task.voice_id}/audio"
     voice_ref_text = voice.transcript if voice else None
 
-    dispatched = await manager.send_task(email, task.id, task.text, voice_url, task.language, voice_ref_text)
+    num_step = int(os.getenv("OMNIVOICE_NUM_STEP", "24"))
+    guidance_scale = float(os.getenv("OMNIVOICE_GUIDANCE_SCALE", "3.0"))
+    dispatched = await manager.send_task(email, task.id, task.text, voice_url, task.language, voice_ref_text, num_step, guidance_scale)
     if dispatched:
         # Mark worker as BUSY in memory to prevent duplicate dispatches
         manager.worker_info[email]["status"] = "BUSY"

@@ -45,9 +45,9 @@ if exist "frontend\package.json" (
 
 echo.
 echo Starting servers...
-echo   Backend API: http://localhost:8001
+echo   Backend API: http://localhost:8090
 echo   Frontend:    http://localhost:3000
-echo   Admin:       http://localhost:8001/admin/
+echo   Admin:       http://localhost:8090/admin/
 echo.
 
 REM Start backend in current window
@@ -60,7 +60,7 @@ if exist "frontend\node_modules" (
 
 echo Both servers starting in separate windows.
 echo.
-echo   Backend: http://localhost:8001
+echo   Backend: http://localhost:8090
 echo   Frontend: http://localhost:3000
 echo.
 pause

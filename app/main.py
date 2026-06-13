@@ -15,43 +15,53 @@ from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path as _Path
 
 
-from app.config import HOST, PORT, STATIC_DIR, CLOUDFLARED_ENABLED, GOOGLE_CLIENT_ID
+from app.config import HOST, PORT, STATIC_DIR, CLOUDFLARED_ENABLED
 from app.database import init_db
-from app.routes import accounts, voices, tasks, ws, tts, health, auth, google_auth
+from app.routes import accounts, voices, tasks, ws, tts, health, auth
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-_tunnel_process = None
+_tunnel_process: subprocess.Popen | None = None
 
 
-async def _start_cloudflare_tunnel():
-    """Start cloudflared to create a public HTTPS URL for the local server."""
+def _start_cloudflare_tunnel_sync():
+    """Start cloudflared via subprocess.Popen (blocking, runs in a thread).
+
+    This runs in a daemon thread so it does not block the event loop.
+    """
     global _tunnel_process
-    try:
-        _tunnel_process = await asyncio.create_subprocess_exec(
-            "cloudflared", "tunnel", "--url", f"http://localhost:{PORT}",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
 
-        # Read the tunnel URL asynchronously from stdout
-        while True:
-            line_bytes = await _tunnel_process.stdout.readline()
-            if not line_bytes:
-                break
-            line_str = line_bytes.decode(errors="ignore").strip()
-            if "trycloudflare.com" in line_str:
-                # Find the URL containing trycloudflare.com
-                for word in line_str.split():
+    import shutil
+    cf_bin = shutil.which("cloudflared") or str(_Path.home() / ".local" / "bin" / "cloudflared")
+    if not _Path(cf_bin).exists():
+        cf_bin = "cloudflared"
+
+    try:
+        proc = subprocess.Popen(
+            [cf_bin, "tunnel", "--url", f"http://localhost:{PORT}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        _tunnel_process = proc
+
+        for line in proc.stdout:
+            if "trycloudflare.com" in line:
+                for word in line.split():
                     if "trycloudflare.com" in word:
-                        # Clean up protocols (remove console color codes if any)
                         url = word.strip()
                         if "https://" in url:
                             logger.info("☁️  Cloudflare Tunnel URL: %s", url)
                             import app.config as config
                             config.SERVER_URL = url
+                            # Keep reading stdout so cloudflared doesn't hang
+                            # (read until EOF, discarding output)
+                            for _ in proc.stdout:
+                                pass
                             return
+        # If we exhaust stdout without finding URL, proc likely failed
+        logger.error("Cloudflare tunnel exited without producing a URL (return code: %d)", proc.poll())
     except FileNotFoundError:
         logger.warning("cloudflared not found. Install it or disable CLOUDFLARED_ENABLED.")
     except Exception as exc:
@@ -94,10 +104,11 @@ async def lifespan(app: FastAPI):
         logger.error("Failed to clean up orphan tasks: %s", e)
 
     if CLOUDFLARED_ENABLED:
-        asyncio.create_task(_start_cloudflare_tunnel())
+        import threading
+        threading.Thread(target=_start_cloudflare_tunnel_sync, daemon=True).start()
 
     # Start background maintenance loop
-    from app.routes.ws import _maintenance_loop, _try_auto_rotate
+    from app.routes.ws import _maintenance_loop
     asyncio.create_task(_maintenance_loop())
     logger.info("Maintenance background loop started.")
 
@@ -110,9 +121,13 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
-    if _tunnel_process:
-        _tunnel_process.terminate()
-        await _tunnel_process.wait()
+    p = _tunnel_process
+    if p and p.poll() is None:
+        try:
+            p.terminate()
+            p.wait(timeout=5)
+        except Exception:
+            pass
     logger.info("Server shutting down.")
 
 
@@ -182,6 +197,10 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         content={"error": "validation_error", "message": exc.errors()},
     )
 
+@app.get("/api/ping")
+async def ping():
+    return {"status": "ok"}
+
 # Register routers
 app.include_router(accounts.router)
 app.include_router(voices.router)
@@ -190,12 +209,6 @@ app.include_router(ws.router)
 app.include_router(tts.router)
 app.include_router(health.router)
 app.include_router(auth.router)
-app.include_router(google_auth.router)
-
-@app.get("/api/config")
-async def get_config():
-    return {"google_client_id": GOOGLE_CLIENT_ID}
-
 
 # Serve static files (admin dashboard at /admin/)
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
@@ -203,5 +216,6 @@ app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.main:app", host=HOST, port=PORT, reload=True)
-
+    config = uvicorn.Config("app.main:app", host=HOST, port=PORT, reload=False)
+    server = uvicorn.Server(config)
+    server.run()

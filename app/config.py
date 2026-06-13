@@ -33,9 +33,8 @@ for d in [DATA_DIR, PROFILES_DIR, VOICES_DIR, RESULTS_DIR]:
 
 # Server settings
 HOST = "0.0.0.0"
-PORT = 8001
+PORT = 8090
 SERVER_URL = f"http://localhost:{PORT}"  # Will be dynamically updated if Cloudflare Tunnel is used
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 
 # Database
 DATABASE_URL = f"sqlite+aiosqlite:///{DATA_DIR / 'db.sqlite3'}"
@@ -56,4 +55,4 @@ WORKER_TIMEOUT = 60  # seconds to wait for page load
 
 WORKER_MAX_LIFETIME = 3.75 * 3600  # 3 hours 45 minutes in seconds
 WORKER_HANDOVER_DELAY = 120  # seconds to wait for new worker ready
-AUTO_PICKUP_ENABLED = True  # start worker automatically at server boot
+AUTO_PICKUP_ENABLED = False  # start worker automatically at server boot

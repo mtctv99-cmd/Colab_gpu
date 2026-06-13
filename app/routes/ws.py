@@ -114,19 +114,24 @@ class ConnectionManager:
         self.worker_info.pop(email, None)
         logger.info("Worker disconnected: %s", email)
 
-    async def send_task(self, email, task_id, text, voice_api_url, language=None, voice_ref_text=None):
+    async def send_task(self, email, task_id, text, voice_api_url, language=None, voice_ref_text=None, num_step=None, guidance_scale=None):
         ws = self.active.get(email)
         if ws is None:
             return False
         try:
-            await ws.send_json({
+            msg = {
                 "action": "run_tts",
                 "task_id": task_id,
                 "text": text,
                 "voice_api_url": voice_api_url,
                 "voice_ref_text": voice_ref_text,
                 "language": language,
-            })
+            }
+            if num_step is not None:
+                msg["num_step"] = num_step
+            if guidance_scale is not None:
+                msg["guidance_scale"] = guidance_scale
+            await ws.send_json(msg)
             return True
         except Exception:
             return False
@@ -473,10 +478,24 @@ async def _has_starting_or_active_account() -> bool:
         return (result.scalar() or 0) > 0
 
 
+_ROTATION_FAILURE_BACKOFF_MINUTES = 2
+_consecutive_rotation_failures = 0
+
 async def _try_auto_rotate():
     async with _rotate_lock:
         now = datetime.now(timezone.utc)
         async with async_session() as db:
+            # Check if already at max capacity (CONNECTING + ACTIVE accounts)
+            cnt_res = await db.execute(
+                select(func.count())
+                .select_from(GoogleAccount)
+                .where(GoogleAccount.status.in_(["CONNECTING", "ACTIVE"]))
+            )
+            already_starting = cnt_res.scalar() or 0
+            if already_starting >= MAX_CONCURRENT_WORKERS:
+                logger.info("Already %d workers starting/active (max %d), skipping rotation", already_starting, MAX_CONCURRENT_WORKERS)
+                return
+
             await db.execute(update(GoogleAccount).where(GoogleAccount.status == "COOLDOWN", GoogleAccount.quota_reset_at <= now).values(status="OFFLINE", quota_reset_at=None))
             await db.commit()
             res = await db.execute(
@@ -496,11 +515,23 @@ async def _try_auto_rotate():
             acc.last_active = now
             email = acc.email
             await db.commit()
+        # Double-check no browser already running for this email
+        if play_runner._registry.is_running(email):
+            logger.warning("Browser already running for %s, skipping launch", email)
+            async with async_session() as db:
+                res = await db.execute(select(GoogleAccount).where(GoogleAccount.email == email))
+                acc2 = res.scalar_one_or_none()
+                if acc2 and acc2.status == "CONNECTING":
+                    acc2.status = "OFFLINE"
+                    await db.commit()
+            return
         try:
             import app.config as cfg
             logger.info("Auto-starting worker for %s -> %s", email, cfg.SERVER_URL)
             await play_runner.start_colab_worker(email, cfg.SERVER_URL)
+            _consecutive_rotation_failures = 0
         except Exception as e:
+            _consecutive_rotation_failures += 1
             logger.error("Rotation failed for %s: %s", email, e)
             error_msg = str(e)
             async with async_session() as db:
@@ -512,26 +543,56 @@ async def _try_auto_rotate():
                         acc.quota_reset_at = None
                         logger.warning("Account %s marked NEEDS_LOGIN due to expired session", email)
                     else:
-                        acc.status = "OFFLINE"
+                        backoff = _ROTATION_FAILURE_BACKOFF_MINUTES * (1 + _consecutive_rotation_failures // 3)
+                        reset_time = now + timedelta(minutes=backoff)
+                        acc.status = "COOLDOWN"
+                        acc.quota_reset_at = reset_time
+                        logger.warning("Account %s marked COOLDOWN %dmin (browser launch error)", email, backoff)
+                        # Clean up any zombie browser processes for this profile
+                        try:
+                            await play_runner.stop_colab_worker(email)
+                        except Exception:
+                            pass
+                        try:
+                            await play_runner.cleanup_zombie_browsers(kill_active=False)
+                        except Exception:
+                            pass
                 await db.commit()
 
 
 async def _maybe_scale_up():
-    if _rotate_lock.locked() or len(manager.active) >= MAX_CONCURRENT_WORKERS:
+    if _consecutive_rotation_failures >= 3:
+        return
+    if _rotate_lock.locked():
         return
     async with async_session() as db:
+        cnt_res = await db.execute(
+            select(func.count())
+            .select_from(GoogleAccount)
+            .where(GoogleAccount.status.in_(["CONNECTING", "ACTIVE"]))
+        )
+        starting = cnt_res.scalar() or 0
         res = await db.execute(select(func.count()).select_from(Task).where(Task.status == "PENDING"))
         pending = res.scalar() or 0
-    active = len(manager.active)
-    if active == 0 and pending > 0:
+    if starting >= MAX_CONCURRENT_WORKERS:
+        return
+    if starting == 0 and pending > 0:
         _safe_create_task(_try_auto_rotate())
-    elif pending > SCALE_UP_PENDING_PER_WORKER * active:
+    elif pending > SCALE_UP_PENDING_PER_WORKER * starting:
         _safe_create_task(_try_auto_rotate())
 
 
 async def _on_batch_request():
-    if _rotate_lock.locked() or len(manager.active) >= MAX_CONCURRENT_WORKERS:
+    if _rotate_lock.locked():
         return
+    async with async_session() as db:
+        cnt_res = await db.execute(
+            select(func.count())
+            .select_from(GoogleAccount)
+            .where(GoogleAccount.status.in_(["CONNECTING", "ACTIVE"]))
+        )
+        if (cnt_res.scalar() or 0) >= MAX_CONCURRENT_WORKERS:
+            return
     global _batch_request_count
     _batch_request_count += 1
     if _batch_request_count >= SCALE_UP_BATCH_THRESHOLD:
@@ -560,17 +621,31 @@ async def _maintenance_loop():
             for acc in result.scalars().all():
                 logger.warning("Resetting stale CONNECTING %s (stuck >%ss)", acc.email, STALE_CONNECTING_TIMEOUT)
                 acc.status = "OFFLINE"
+                # Close any lingering browser for this account
+                try:
+                    await play_runner.stop_colab_worker(acc.email)
+                except Exception:
+                    pass
             await db.commit()
 
-        # 2. Proactive scale-up
-        if not _rotate_lock.locked() and len(manager.active) < MAX_CONCURRENT_WORKERS:
+        # 2. Proactive scale-up (skip if too many consecutive failures)
+        if _consecutive_rotation_failures >= 3:
+            pass
+        elif not _rotate_lock.locked():
             async with async_session() as db:
+                cnt_res = await db.execute(
+                    select(func.count())
+                    .select_from(GoogleAccount)
+                    .where(GoogleAccount.status.in_(["CONNECTING", "ACTIVE"]))
+                )
+                starting = cnt_res.scalar() or 0
                 res = await db.execute(select(func.count()).select_from(Task).where(Task.status == "PENDING"))
                 pending = res.scalar() or 0
-            active = len(manager.active)
-            if active == 0 and pending > 0:
+            if pending > 0 and starting >= MAX_CONCURRENT_WORKERS:
+                pass
+            elif starting == 0 and pending > 0:
                 _safe_create_task(_try_auto_rotate())
-            elif pending > SCALE_UP_PENDING_PER_WORKER * active:
+            elif pending > SCALE_UP_PENDING_PER_WORKER * starting:
                 _safe_create_task(_try_auto_rotate())
 
         # 3. Scale-down idle workers

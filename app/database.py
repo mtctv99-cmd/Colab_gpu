@@ -55,6 +55,29 @@ async def init_db():
             # Silently ignore if column already exists
             pass
 
+    # Fix Windows-style paths in voices table for Linux hosts
+    from pathlib import Path
+    from app.config import VOICES_DIR
+    try:
+        async with async_session() as session:
+            voices = await session.execute(sa.text("SELECT id, audio_path FROM voices"))
+            for row in voices.fetchall():
+                vid, apath = row
+                apath = apath.replace("\\", "/")
+                if ":" in apath:
+                    parts = apath.split("/")
+                    if "voices" in parts:
+                        idx = parts.index("voices")
+                        slug = parts[idx + 1] if idx + 1 < len(parts) else ""
+                        wav = parts[-1] if parts else "ref.wav"
+                        fixed = str(VOICES_DIR / slug / wav)
+                        await session.execute(sa.text("UPDATE voices SET audio_path = :p WHERE id = :id"), {"p": fixed, "id": vid})
+                        logger = __import__("logging").getLogger(__name__)
+                        logger.info("Fixed audio_path for voice %s: %s → %s", vid, apath, fixed)
+            await session.commit()
+    except Exception:
+        pass
+
 
 async def get_db():
     """Dependency that yields a database session."""

@@ -2,10 +2,13 @@
 
 import asyncio
 import logging
+import os
 import subprocess
 import sys
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from typing import Any
 
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 
@@ -13,13 +16,143 @@ from app.config import DATA_DIR, PROFILES_DIR, GITHUB_USER, GITHUB_REPO, COLAB_N
 from app.database import async_session
 from app.models import GoogleAccount
 from sqlalchemy import update
-from datetime import timedelta
 
 logger = logging.getLogger(__name__)
 
 CELL_START_TIMEOUT_SECONDS = 90
 CELL_START_BACKOFF_MINUTES = 10
 LOGIN_WATCH_TIMEOUT_SECONDS = 300
+
+ROLE_WORKER = "worker"
+ROLE_LOGIN = "login"
+
+
+@dataclass
+class BrowserEntry:
+    email: str
+    role: str
+    pw: Any = None
+    context: Any = None
+    page: Any = None
+    pid: int = 0
+    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    keepalive_task: asyncio.Task | None = None
+    login_watcher_task: asyncio.Task | None = None
+
+
+class BrowserRegistry:
+    """Single source of truth for all managed browser instances."""
+
+    def __init__(self):
+        self._entries: dict[str, BrowserEntry] = {}
+
+    def register(self, email: str, role: str, pw=None, context=None, page=None) -> BrowserEntry:
+        entry = BrowserEntry(email=email, role=role, pw=pw, context=context, page=page)
+        if pw and hasattr(pw, 'pid'):
+            try:
+                entry.pid = pw.pid
+            except Exception:
+                pass
+        self._entries[email] = entry
+        return entry
+
+    def unregister(self, email: str) -> BrowserEntry | None:
+        return self._entries.pop(email, None)
+
+    def get(self, email: str) -> BrowserEntry | None:
+        return self._entries.get(email)
+
+    def is_running(self, email: str) -> bool:
+        return email in self._entries
+
+    def get_pid(self, email: str) -> int:
+        e = self._entries.get(email)
+        return e.pid if e else 0
+
+    def get_all(self) -> dict[str, BrowserEntry]:
+        return dict(self._entries)
+
+    def get_active_profiles(self) -> set[str]:
+        return {str(PROFILES_DIR / email) for email in self._entries}
+
+    def get_emails_by_role(self, role: str) -> list[str]:
+        return [e.email for e in self._entries.values() if e.role == role]
+
+    async def stop_one(self, email: str):
+        """Stop a single browser by email: cancel tasks, close context, kill process."""
+        entry = self._entries.get(email)
+        if not entry:
+            return
+
+        # Cancel keepalive
+        if entry.keepalive_task and not entry.keepalive_task.done():
+            entry.keepalive_task.cancel()
+            try:
+                await entry.keepalive_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        # Cancel login watcher
+        if entry.login_watcher_task and not entry.login_watcher_task.done():
+            entry.login_watcher_task.cancel()
+            try:
+                await entry.login_watcher_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        # Close context & playwright
+        if entry.context:
+            try:
+                await entry.context.close()
+            except Exception:
+                pass
+        if entry.pw:
+            try:
+                await entry.pw.stop()
+            except Exception:
+                pass
+
+        # Kill lingering Chrome process by PID
+        if entry.pid:
+            try:
+                os.kill(entry.pid, 9)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+
+        self._entries.pop(email, None)
+        logger.info("Stopped browser [role=%s] for %s (pid=%s)", entry.role, email, entry.pid)
+
+    async def stop_all(self):
+        for email in list(self._entries.keys()):
+            await self.stop_one(email)
+
+    async def stop_role(self, role: str):
+        for email in list(self._entries.keys()):
+            if self._entries.get(email, {}).get('role') == role:
+                await self.stop_one(email)
+
+    def set_page(self, email: str, page):
+        e = self._entries.get(email)
+        if e:
+            e.page = page
+
+    def set_keepalive_task(self, email: str, task: asyncio.Task):
+        e = self._entries.get(email)
+        if e:
+            e.keepalive_task = task
+
+    def set_login_watcher_task(self, email: str, task: asyncio.Task):
+        e = self._entries.get(email)
+        if e:
+            e.login_watcher_task = task
+
+    def set_pid(self, email: str, pid: int):
+        e = self._entries.get(email)
+        if e:
+            e.pid = pid
+
+
+_registry = BrowserRegistry()
 
 
 # JS utilities for Playwright automation - injected via add_init_script
@@ -112,16 +245,6 @@ _JS_UTILS = """
 """
 
 
-# In-memory store for active browser contexts
-_active_contexts: dict[str, dict] = {}  # email -> {pw, context, role, started_at, pid}
-
-ROLE_WORKER = "worker"
-ROLE_LOGIN = "login"
-_active_pages: dict[str, Page] = {}
-_keepalive_tasks: dict[str, asyncio.Task] = {}
-_login_watchers: dict[str, asyncio.Task] = {}
-
-
 async def cleanup_zombie_browsers(kill_active: bool = False) -> int:
     """Kill Chromium/Chrome processes launched with this app's profile directory.
 
@@ -129,10 +252,7 @@ async def cleanup_zombie_browsers(kill_active: bool = False) -> int:
     Supports Windows (PowerShell) and Linux (pgrep+kill).
     """
     profiles_base = str(PROFILES_DIR)
-    active_profiles = {
-        str(PROFILES_DIR / email)
-        for email in _active_contexts.keys()
-    }
+    active_profiles = _registry.get_active_profiles()
     killed = 0
 
     if sys.platform.startswith("win"):
@@ -272,16 +392,15 @@ async def add_google_account_session(email: str) -> None:
         await _dismiss_chrome_restore_pages(page)
         await page.goto("https://accounts.google.com/")
 
-        # Store references with role metadata
-        _active_contexts[email] = {"pw": pw, "context": context, "role": ROLE_LOGIN, "started_at": datetime.now(timezone.utc)}
-        _active_pages[email] = page
-        logger.info("Opened login window for %s", email)
+        # Register with centralized registry
+        entry = _registry.register(email, role=ROLE_LOGIN, pw=pw, context=context, page=page)
+        logger.info("Opened login window for %s (pid=%s)", email, entry.pid)
 
         # Auto-close once Google login session detected
-        watcher = _login_watchers.get(email)
-        if watcher and not watcher.done():
-            watcher.cancel()
-        _login_watchers[email] = asyncio.create_task(_watch_google_login(email))
+        existing = _registry.get(email)
+        if existing and existing.login_watcher_task and not existing.login_watcher_task.done():
+            existing.login_watcher_task.cancel()
+        _registry.set_login_watcher_task(email, asyncio.create_task(_watch_google_login(email)))
     except Exception as exc:
         await pw.stop()
         logger.error("Failed to open login window for %s: %s", email, exc)
@@ -290,33 +409,7 @@ async def add_google_account_session(email: str) -> None:
 
 async def finish_google_account_session(email: str) -> None:
     """Close the login browser window. Cookies are already persisted."""
-    watcher = _login_watchers.pop(email, None)
-    current = asyncio.current_task()
-    if watcher is not None and watcher is not current and not watcher.done():
-        watcher.cancel()
-        try:
-            await watcher
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            pass
-
-    entry = _active_contexts.pop(email, None)
-    _active_pages.pop(email, None)
-    if entry is None:
-        return
-
-    pw = entry["pw"] if isinstance(entry, dict) else entry[0]
-    ctx = entry["context"] if isinstance(entry, dict) else entry[1]
-    try:
-        await ctx.close()
-    except Exception as exc:
-        logger.debug("Failed to close context (possibly already closed): %s", exc)
-    try:
-        await pw.stop()
-    except Exception as exc:
-        logger.debug("Failed to stop playwright: %s", exc)
-    logger.info("Closed login window for %s", email)
+    await _registry.stop_one(email)
 
 
 async def _watch_google_login(email: str) -> None:
@@ -324,10 +417,10 @@ async def _watch_google_login(email: str) -> None:
     deadline = asyncio.get_event_loop().time() + LOGIN_WATCH_TIMEOUT_SECONDS
     while asyncio.get_event_loop().time() < deadline:
         await asyncio.sleep(2)
-        entry = _active_contexts.get(email)
-        if not entry:
+        entry = _registry.get(email)
+        if not entry or not entry.context:
             return
-        ctx = entry["context"] if isinstance(entry, dict) else entry[1]
+        ctx = entry.context
         try:
             cookies = await ctx.cookies("https://accounts.google.com")
         except Exception:
@@ -1199,13 +1292,12 @@ async def start_colab_worker(email: str, server_url: str) -> None:
         except Exception as e:
             logger.warning("Failed to inject Keep-Alive JS for %s: %s", email, e)
 
-        # Store references
-        _active_contexts[email] = {"pw": pw, "context": context, "role": ROLE_WORKER, "started_at": datetime.now(timezone.utc)}
-        _active_pages[email] = page
+        # Register with centralized registry
+        entry = _registry.register(email, role=ROLE_WORKER, pw=pw, context=context, page=page)
 
         # Start keep-alive task
         task = asyncio.create_task(_keepalive_loop(email))
-        _keepalive_tasks[email] = task
+        _registry.set_keepalive_task(email, task)
         logger.info("Colab worker process started and keep-alive active for %s", email)
 
     except Exception as exc:
@@ -1229,34 +1321,18 @@ async def start_colab_worker(email: str, server_url: str) -> None:
 
 async def stop_colab_worker(email: str) -> None:
     """Stop the Colab worker: cancel keep-alive, close browser."""
-    keepalive = _keepalive_tasks.pop(email, None)
-    if keepalive is not None:
-        keepalive.cancel()
-        try:
-            await keepalive
-        except asyncio.CancelledError:
-            pass
-
-    entry = _active_contexts.pop(email, None)
-    _active_pages.pop(email, None)
-    if entry is not None:
-        pw = entry["pw"]
-        ctx = entry["context"]
-        role = entry.get("role", "unknown")
-        await ctx.close()
-        await pw.stop()
-        logger.info("Stopped browser [role=%s] for %s", role, email)
+    await _registry.stop_one(email)
 
 
 async def _keepalive_loop(email: str) -> None:
     """Periodically interact with the Colab page to prevent idle timeout."""
     while True:
         await asyncio.sleep(WORKER_KEEPALIVE_INTERVAL)
-        page = _active_pages.get(email)
-        if page is None:
+        entry = _registry.get(email)
+        if entry is None or entry.page is None:
             break
         try:
-            await page.evaluate("window.scrollTo(0, 100)")
+            await entry.page.evaluate("window.scrollTo(0, 100)")
             logger.debug("Keep-alive scroll for %s", email)
         except Exception as exc:
             logger.warning("Keep-alive failed for %s: %s", email, exc)

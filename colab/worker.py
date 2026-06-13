@@ -27,8 +27,8 @@ SAMPLE_RATE = 24000
 REF_CACHE_DIR = Path("/tmp/omnivoice_refs")
 MODEL_ID = "k2-fsa/OmniVoice"
 TASK_QUEUE_MAXSIZE = 16
-OMNIVOICE_NUM_STEP = int(os.getenv("OMNIVOICE_NUM_STEP", "12")) # Higher quality steps
-OMNIVOICE_GUIDANCE_SCALE = float(os.getenv("OMNIVOICE_GUIDANCE_SCALE", "2.0")) # Better voice guidance
+OMNIVOICE_NUM_STEP = int(os.getenv("OMNIVOICE_NUM_STEP", "24")) # Higher quality steps (24 = better, 32 = best)
+OMNIVOICE_GUIDANCE_SCALE = float(os.getenv("OMNIVOICE_GUIDANCE_SCALE", "3.0")) # Better voice guidance
 _REF_MAX_RAW = float(os.getenv("REF_AUDIO_MAX_SECONDS", "15")) # Increased to 15s for better clone quality
 REF_AUDIO_MAX_SECONDS = max(1.0, min(30.0, _REF_MAX_RAW))
 if REF_AUDIO_MAX_SECONDS != _REF_MAX_RAW:
@@ -114,6 +114,8 @@ def build_generate_kwargs(
     ref_audio: str,
     ref_text: str | None = None,
     language: str | None = None,
+    num_step: int | None = None,
+    guidance_scale: float | None = None,
 ) -> dict[str, Any]:
     kwargs: dict[str, Any] = {}
 
@@ -151,10 +153,11 @@ def build_generate_kwargs(
         elif "lang" in params:
             kwargs["lang"] = language
 
+    ns = num_step if num_step is not None else OMNIVOICE_NUM_STEP
     if "num_step" in params:
-        kwargs["num_step"] = OMNIVOICE_NUM_STEP
+        kwargs["num_step"] = ns
     elif "num_steps" in params:
-        kwargs["num_steps"] = OMNIVOICE_NUM_STEP
+        kwargs["num_steps"] = ns
 
     # Disable internal preprocessing/trimming if model supports it,
     # because the worker already handled trimming via prepare_ref_audio.
@@ -163,8 +166,9 @@ def build_generate_kwargs(
     elif "preprocess" in params:
         kwargs["preprocess"] = False
 
+    gs = guidance_scale if guidance_scale is not None else OMNIVOICE_GUIDANCE_SCALE
     if "guidance_scale" in params:
-        kwargs["guidance_scale"] = OMNIVOICE_GUIDANCE_SCALE
+        kwargs["guidance_scale"] = gs
 
     if "speed" in params:
         kwargs["speed"] = OMNIVOICE_SPEED
@@ -334,9 +338,11 @@ def get_voice_clone_prompt(model: Any, ref_audio: str, ref_text: str | None = No
         return None
 
 
-def run_tts(model: Any, text: str, ref_audio: str, ref_text: str | None = None, language: str | None = None) -> bytes:
+def run_tts(model: Any, text: str, ref_audio: str, ref_text: str | None = None, language: str | None = None,
+            num_step: int | None = None, guidance_scale: float | None = None) -> bytes:
     params = getattr(model, "_omnivoice_generate_params", set())
-    kwargs = build_generate_kwargs(params, text, ref_audio, ref_text=ref_text, language=language)
+    kwargs = build_generate_kwargs(params, text, ref_audio, ref_text=ref_text, language=language,
+                                   num_step=num_step, guidance_scale=guidance_scale)
 
     # OmniVoice specific: get prompt if supported
     voice_prompt = get_voice_clone_prompt(model, ref_audio, ref_text)
@@ -425,8 +431,10 @@ async def process_task(model: Any, ws: Any, http_client: httpx.AsyncClient, serv
 
         loop = asyncio.get_running_loop()
         tts_started = time.time()
+        ns = data.get("num_step")
+        gs = data.get("guidance_scale")
         result_audio = await loop.run_in_executor(
-            executor, run_tts, model, text, ref_path, ref_text, language
+            executor, run_tts, model, text, ref_path, ref_text, language, ns, gs
         )
         tts_ms = (time.time() - tts_started) * 1000
 

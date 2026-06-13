@@ -9,7 +9,7 @@ import uvicorn
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-PORT = 8001
+PORT = int(os.getenv("PORT", "8090"))
 
 def kill_existing_on_port(port: int) -> None:
     """Kill any process currently listening on the given port (Windows only)."""
@@ -33,4 +33,6 @@ def kill_existing_on_port(port: int) -> None:
 
 if __name__ == "__main__":
     kill_existing_on_port(PORT)
-    uvicorn.run("app.main:app", host="0.0.0.0", port=PORT, reload=False)
+    config = uvicorn.Config("app.main:app", host="0.0.0.0", port=PORT, reload=False)
+    server = uvicorn.Server(config)
+    server.run()
