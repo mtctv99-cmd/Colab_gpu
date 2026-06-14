@@ -37,7 +37,11 @@ PORT = 8090
 SERVER_URL = f"http://localhost:{PORT}"  # Will be dynamically updated if Cloudflare Tunnel is used
 
 # Database
-DATABASE_URL = f"sqlite+aiosqlite:///{DATA_DIR / 'db.sqlite3'}"
+import sys
+if "pytest" in sys.modules or (len(sys.argv) > 0 and "pytest" in sys.argv[0]):
+    DATABASE_URL = f"sqlite+aiosqlite:///{DATA_DIR / 'db_test.sqlite3'}"
+else:
+    DATABASE_URL = f"sqlite+aiosqlite:///{DATA_DIR / 'db.sqlite3'}"
 
 # Google Colab / GitHub settings
 GITHUB_USER = os.getenv("GITHUB_USER", "")
