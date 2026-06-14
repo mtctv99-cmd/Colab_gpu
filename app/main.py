@@ -118,16 +118,16 @@ async def lifespan(app: FastAPI):
 
 async def _delayed_auto_pickup():
     """Delay auto-pickup until Cloudflare tunnel is ready (max 120s)."""
-    from app.config import SERVER_URL, CLOUDFLARED_ENABLED
+    import app.config as config
     for i in range(24):
-        if not CLOUDFLARED_ENABLED:
+        if not config.CLOUDFLARED_ENABLED:
             break
-        if "localhost" not in SERVER_URL and "127.0.0.1" not in SERVER_URL:
-            logger.info("Cloudflare tunnel ready: %s", SERVER_URL)
+        if "localhost" not in config.SERVER_URL and "127.0.0.1" not in config.SERVER_URL:
+            logger.info("Cloudflare tunnel ready: %s", config.SERVER_URL)
             break
         await asyncio.sleep(5)
     else:
-        logger.warning("Cloudflare tunnel not ready after 120s, proceeding with %s", SERVER_URL)
+        logger.warning("Cloudflare tunnel not ready after 120s, proceeding with %s", config.SERVER_URL)
     from app.routes.ws import _try_auto_rotate
     await _try_auto_rotate()
 
