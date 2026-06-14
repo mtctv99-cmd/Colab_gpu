@@ -380,7 +380,8 @@ async def add_google_account_session(email: str) -> None:
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
                 "--disable-blink-features=AutomationControlled",
-                "--colab-role=login"
+                "--colab-role=login",
+                "--window-position=-2000,-2000"
             ],
             ignore_default_args=["--enable-automation"]
         )
@@ -1167,7 +1168,8 @@ async def start_colab_worker(email: str, server_url: str, worker_session_id: str
                 "--disable-session-crashed-bubble",
                 "--disable-infobars",
                 "--no-first-run",
-                "--colab-role=worker"
+                "--colab-role=worker",
+                "--window-position=-2000,-2000"
             ],
             ignore_default_args=["--enable-automation"],
             viewport={"width": 1280, "height": 800},
