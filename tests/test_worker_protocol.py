@@ -205,4 +205,81 @@ async def test_complete_worker_session_lifecycle_flow():
 
     app.dependency_overrides.clear()
 
-    app.dependency_overrides.clear()
+
+@pytest.mark.asyncio
+async def test_ws_handle_status_idle_since_and_last_active():
+    from app.routes.ws import _handle_status, manager
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import select
+
+    await init_db()
+    async with async_session() as db:
+        # Cleanup
+        await db.execute(UsageRecord.__table__.delete())
+        await db.execute(Task.__table__.delete())
+        await db.execute(GoogleAccount.__table__.delete())
+        await db.execute(Voice.__table__.delete())
+        await db.commit()
+
+        # Add Google account
+        initial_last_active = (datetime.now(timezone.utc) - timedelta(hours=1)).replace(tzinfo=None)
+        acc = GoogleAccount(
+            email="ws_status_test@gmail.com",
+            profile_name="ws_status_test",
+            status="READY",
+            runtime_status="CONNECTING_RUNTIME",
+            last_active=initial_last_active,
+            idle_since=None
+        )
+        db.add(acc)
+        await db.commit()
+
+    # 1. Update status to IDLE (first time)
+    # This should set idle_since to now, update last_heartbeat_at, but NOT update last_active
+    await _handle_status("ws_status_test@gmail.com", "IDLE")
+
+    async with async_session() as db:
+        res = await db.execute(select(GoogleAccount).where(GoogleAccount.email == "ws_status_test@gmail.com"))
+        acc_db = res.scalar_one()
+        assert acc_db.runtime_status == "IDLE"
+        assert acc_db.idle_since is not None
+        first_idle_since = acc_db.idle_since
+        assert acc_db.last_active == initial_last_active  # UNCHANGED!
+        assert acc_db.last_heartbeat_at is not None
+
+    # 2. Update status to IDLE again (heartbeat)
+    # This should keep the same idle_since (not update it), and NOT update last_active
+    await asyncio.sleep(0.01) # ensure clock could tick
+    await _handle_status("ws_status_test@gmail.com", "IDLE")
+
+    async with async_session() as db:
+        res = await db.execute(select(GoogleAccount).where(GoogleAccount.email == "ws_status_test@gmail.com"))
+        acc_db = res.scalar_one()
+        assert acc_db.idle_since == first_idle_since  # UNCHANGED!
+        assert acc_db.last_active == initial_last_active  # UNCHANGED!
+
+    # 3. Update status to BUSY (non-IDLE)
+    # This should clear idle_since (set to None) and NOT update last_active
+    await _handle_status("ws_status_test@gmail.com", "BUSY")
+
+    async with async_session() as db:
+        res = await db.execute(select(GoogleAccount).where(GoogleAccount.email == "ws_status_test@gmail.com"))
+        acc_db = res.scalar_one()
+        assert acc_db.runtime_status == "BUSY"
+        assert acc_db.idle_since is None
+        assert acc_db.last_active == initial_last_active  # UNCHANGED!
+
+    # 4. Update status to OUT_OF_QUOTA
+    # This should clear idle_since (set to None) and set status to COOLDOWN
+    # We mock stop_colab_worker to avoid actual system calls
+    with patch("app.automation.play_runner.stop_colab_worker", new_callable=AsyncMock) as mock_stop:
+        await _handle_status("ws_status_test@gmail.com", "OUT_OF_QUOTA")
+        assert mock_stop.called
+
+    async with async_session() as db:
+        res = await db.execute(select(GoogleAccount).where(GoogleAccount.email == "ws_status_test@gmail.com"))
+        acc_db = res.scalar_one()
+        assert acc_db.status == "COOLDOWN"
+        assert acc_db.idle_since is None
+        assert acc_db.runtime_status is None
+

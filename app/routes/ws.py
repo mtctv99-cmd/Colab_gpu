@@ -398,6 +398,7 @@ async def websocket_worker(ws: WebSocket):
                         acc.runtime_status = None
                         acc.colab_pid = None
                         acc.current_task_id = None
+                        acc.idle_since = None
 
                         # Requeue tasks owned by this worker
                         res_t = await db.execute(
@@ -437,6 +438,7 @@ async def _handle_status(email: str, status: str):
                 acc.runtime_status = None
                 acc.current_task_id = None
                 acc.colab_pid = None
+                acc.idle_since = None
 
                 # Reset processing tasks
                 await db.execute(
@@ -456,8 +458,12 @@ async def _handle_status(email: str, status: str):
             else:
                 # Update DB runtime status to match current activity
                 acc.runtime_status = status
-                acc.last_active = datetime.now(timezone.utc)
                 acc.last_heartbeat_at = datetime.now(timezone.utc)
+                if status == "IDLE":
+                    if acc.idle_since is None:
+                        acc.idle_since = datetime.now(timezone.utc)
+                else:
+                    acc.idle_since = None
                 await db.commit()
 
     if status == "IDLE":

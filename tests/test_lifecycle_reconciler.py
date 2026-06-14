@@ -38,7 +38,8 @@ async def test_reconcile_database_on_startup_resets_states():
             browser_session_id="bs_1",
             runtime_status="BUSY",
             current_task_id="t_1",
-            colab_pid=9999
+            colab_pid=9999,
+            idle_since=now
         )
         acc2 = GoogleAccount(
             email="cooldown_expired@gmail.com",
@@ -46,7 +47,8 @@ async def test_reconcile_database_on_startup_resets_states():
             status="COOLDOWN",
             quota_reset_at=now - timedelta(hours=1),
             worker_session_id="ws_2",
-            browser_session_id="bs_2"
+            browser_session_id="bs_2",
+            idle_since=now
         )
         acc3 = GoogleAccount(
             email="cooldown_active@gmail.com",
@@ -54,13 +56,15 @@ async def test_reconcile_database_on_startup_resets_states():
             status="COOLDOWN",
             quota_reset_at=now + timedelta(hours=2),
             worker_session_id="ws_3",
-            browser_session_id="bs_3"
+            browser_session_id="bs_3",
+            idle_since=now
         )
         acc4 = GoogleAccount(
             email="login@gmail.com",
             profile_name="login",
             status="NEEDS_LOGIN",
-            worker_session_id="ws_4"
+            worker_session_id="ws_4",
+            idle_since=now
         )
         acc5 = GoogleAccount(
             email="disabled@gmail.com",
@@ -109,18 +113,22 @@ async def test_reconcile_database_on_startup_resets_states():
         assert acc_map["ready@gmail.com"].browser_session_id is None
         assert acc_map["ready@gmail.com"].runtime_status is None
         assert acc_map["ready@gmail.com"].colab_pid is None
+        assert acc_map["ready@gmail.com"].idle_since is None
 
         # cooldown_expired@gmail.com -> READY, runtime fields reset
         assert acc_map["cooldown_expired@gmail.com"].status == ACCOUNT_READY
         assert acc_map["cooldown_expired@gmail.com"].worker_session_id is None
+        assert acc_map["cooldown_expired@gmail.com"].idle_since is None
 
         # cooldown_active@gmail.com -> COOLDOWN remains, runtime fields reset
         assert acc_map["cooldown_active@gmail.com"].status == ACCOUNT_COOLDOWN
         assert acc_map["cooldown_active@gmail.com"].worker_session_id is None
+        assert acc_map["cooldown_active@gmail.com"].idle_since is None
 
         # login@gmail.com -> NEEDS_LOGIN remains, runtime fields reset
         assert acc_map["login@gmail.com"].status == ACCOUNT_NEEDS_LOGIN
         assert acc_map["login@gmail.com"].worker_session_id is None
+        assert acc_map["login@gmail.com"].idle_since is None
 
         # disabled@gmail.com -> DISABLED remains
         assert acc_map["disabled@gmail.com"].status == ACCOUNT_DISABLED

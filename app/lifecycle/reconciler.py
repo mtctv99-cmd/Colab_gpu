@@ -48,6 +48,7 @@ async def reconcile_database_on_startup():
                     acc.last_heartbeat_at = None
                     acc.lease_expires_at = None
                     acc.colab_pid = None
+                    acc.idle_since = None
                     continue
 
                 # Check if COOLDOWN is still valid
@@ -65,6 +66,7 @@ async def reconcile_database_on_startup():
                         acc.last_heartbeat_at = None
                         acc.lease_expires_at = None
                         acc.colab_pid = None
+                        acc.idle_since = None
                         continue
 
                 # Default to READY
@@ -76,6 +78,7 @@ async def reconcile_database_on_startup():
                 acc.last_heartbeat_at = None
                 acc.lease_expires_at = None
                 acc.colab_pid = None
+                acc.idle_since = None
 
             # 2. Requeue stuck tasks
             await db.execute(

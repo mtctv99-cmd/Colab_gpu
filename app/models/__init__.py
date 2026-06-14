@@ -26,6 +26,7 @@ class GoogleAccount(Base):
     current_task_id = Column(String, nullable=True)
     last_heartbeat_at = Column(DateTime, nullable=True)
     lease_expires_at = Column(DateTime, nullable=True)
+    idle_since = Column(DateTime, nullable=True)
 
     tasks = relationship("Task", back_populates="worker")
 

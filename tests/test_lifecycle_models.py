@@ -77,6 +77,7 @@ def test_google_account_columns():
     assert hasattr(GoogleAccount, "current_task_id")
     assert hasattr(GoogleAccount, "last_heartbeat_at")
     assert hasattr(GoogleAccount, "lease_expires_at")
+    assert hasattr(GoogleAccount, "idle_since")
 
 
 def test_task_columns():

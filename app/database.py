@@ -54,6 +54,7 @@ async def init_db():
         "ALTER TABLE tasks ADD COLUMN attempt INTEGER DEFAULT 0",
         "ALTER TABLE tasks ADD COLUMN leased_at DATETIME",
         "ALTER TABLE tasks ADD COLUMN lease_expires_at DATETIME",
+        "ALTER TABLE google_accounts ADD COLUMN idle_since DATETIME",
     ]
     for sql in _MIGRATIONS:
         try:

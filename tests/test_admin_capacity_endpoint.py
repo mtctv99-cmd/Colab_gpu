@@ -56,5 +56,35 @@ async def test_admin_capacity_endpoint():
         assert data["idle_capacity"] == 1
         assert data["active_capacity"] == 1
 
+        # Test list_accounts endpoint and verify it returns idle_since
+        response_list = client.get("/api/accounts")
+        assert response_list.status_code == 200
+        accounts_data = response_list.json()
+        assert len(accounts_data) == 1
+        assert "idle_since" in accounts_data[0]
+        # In our DB insertion we didn't specify idle_since, so it should be None
+        assert accounts_data[0]["idle_since"] is None
+
+        # Add another account with a non-null idle_since to verify it is returned
+        from datetime import datetime, timezone
+        async with async_session() as db:
+            acc2 = GoogleAccount(
+                email="capacity_check2@gmail.com",
+                profile_name="capacity_check2",
+                status=ACCOUNT_READY,
+                runtime_status=RUNTIME_IDLE,
+                worker_session_id="ws_cap_check2",
+                idle_since=datetime.now(timezone.utc)
+            )
+            db.add(acc2)
+            await db.commit()
+
+        response_list = client.get("/api/accounts")
+        assert response_list.status_code == 200
+        accounts_data = response_list.json()
+        assert len(accounts_data) == 2
+        acc2_data = next(a for a in accounts_data if a["email"] == "capacity_check2@gmail.com")
+        assert acc2_data["idle_since"] is not None
+
     # Clean dependency overrides
     app.dependency_overrides.clear()

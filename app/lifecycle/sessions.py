@@ -84,6 +84,7 @@ async def validate_worker_registration(db: AsyncSession, email: str, worker_sess
 
     acc.worker_session_id = worker_session_id
     acc.runtime_status = RUNTIME_IDLE
+    acc.idle_since = now
     acc.last_heartbeat_at = now
 
     # Reset started_at if fresh worker session (not connecting/loading)
@@ -131,6 +132,7 @@ async def lease_task_to_worker_session(db: AsyncSession, task: Task, email: str,
 
     acc.runtime_status = RUNTIME_BUSY
     acc.current_task_id = task.id
+    acc.idle_since = None
 
     await db.commit()
     logger.info("Task %s leased to %s (session %s, attempt %d)", task.id, email, worker_session_id, task.attempt)
@@ -166,5 +168,6 @@ async def release_worker_session_after_stop(db: AsyncSession, email: str):
         acc.last_heartbeat_at = None
         acc.lease_expires_at = None
         acc.colab_pid = None
+        acc.idle_since = None
         await db.commit()
         logger.info("Released worker session fields for %s", email)

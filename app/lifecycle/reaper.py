@@ -149,10 +149,10 @@ async def find_scale_down_worker(db: AsyncSession, active_emails: list[str]) -> 
             and_(
                 GoogleAccount.email.in_(active_emails),
                 GoogleAccount.runtime_status == RUNTIME_IDLE,
-                GoogleAccount.last_active < cutoff
+                GoogleAccount.idle_since < cutoff
             )
         )
-        .order_by(GoogleAccount.last_active.asc())
+        .order_by(GoogleAccount.idle_since.asc())
         .limit(1)
     )
     acc = res.scalar_one_or_none()

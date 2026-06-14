@@ -120,14 +120,16 @@ async def test_reaper_periodic_maintenance_rules():
             profile_name="i1",
             status="READY",
             runtime_status=RUNTIME_IDLE,
-            last_active=now - timedelta(seconds=2000) # idle longer than 1800s
+            last_active=now - timedelta(seconds=2000),
+            idle_since=now - timedelta(seconds=2000) # idle longer than 1800s
         )
         acc_idle2 = GoogleAccount(
             email="idle2@gmail.com",
             profile_name="i2",
             status="READY",
             runtime_status=RUNTIME_IDLE,
-            last_active=now - timedelta(seconds=100) # idle 100s
+            last_active=now - timedelta(seconds=100),
+            idle_since=now - timedelta(seconds=100) # idle 100s
         )
         db.add_all([acc_idle1, acc_idle2])
         await db.commit()

@@ -63,6 +63,7 @@ async def test_session_lifecycle_and_verification_rules():
         assert acc.worker_session_id == "ws_1"
         assert acc.runtime_status == RUNTIME_IDLE
         assert acc.started_at is not None
+        assert acc.idle_since is not None
 
         # 3. Test lease_task_to_worker_session
         task = Task(id="t1", text="text", voice_id=voice.id, status="PENDING")
@@ -79,6 +80,7 @@ async def test_session_lifecycle_and_verification_rules():
 
         assert acc.runtime_status == RUNTIME_BUSY
         assert acc.current_task_id == "t1"
+        assert acc.idle_since is None
 
         # Lease again -> should fail because worker is not IDLE anymore
         task2 = Task(id="t2", text="text", voice_id=voice.id, status="PENDING")
@@ -94,6 +96,10 @@ async def test_session_lifecycle_and_verification_rules():
         assert await validate_task_ownership(db, "t2", "work@gmail.com", "ws_1") is False
 
         # 5. Test release_worker_session_after_stop
+        # Temporarily set idle_since to test if it gets cleared
+        acc.idle_since = datetime.now(timezone.utc)
+        await db.commit()
+
         await release_worker_session_after_stop(db, "work@gmail.com")
         assert acc.worker_session_id is None
         assert acc.browser_session_id is None
@@ -102,6 +108,7 @@ async def test_session_lifecycle_and_verification_rules():
         assert acc.last_heartbeat_at is None
         assert acc.lease_expires_at is None
         assert acc.colab_pid is None
+        assert acc.idle_since is None
 
         # Cleanup voice
         await db.delete(voice)

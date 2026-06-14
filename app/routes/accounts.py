@@ -45,6 +45,7 @@ async def list_accounts(db: AsyncSession = Depends(get_db)):
             "started_at": a.started_at.isoformat() if a.started_at else None,
             "last_heartbeat_at": a.last_heartbeat_at.isoformat() if a.last_heartbeat_at else None,
             "quota_reset_at": a.quota_reset_at.isoformat() if a.quota_reset_at else None,
+            "idle_since": a.idle_since.isoformat() if a.idle_since else None,
         }
         for a in accounts
     ]
