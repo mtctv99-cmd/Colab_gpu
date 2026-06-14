@@ -1335,14 +1335,18 @@ async def stop_colab_worker(email: str) -> None:
 
 async def _keepalive_loop(email: str) -> None:
     """Periodically interact with the Colab page to prevent idle timeout."""
-    while True:
-        await asyncio.sleep(WORKER_KEEPALIVE_INTERVAL)
-        entry = _registry.get(email)
-        if entry is None or entry.page is None:
-            break
-        try:
-            await entry.page.evaluate("window.scrollTo(0, 100)")
-            logger.debug("Keep-alive scroll for %s", email)
-        except Exception as exc:
-            logger.warning("Keep-alive failed for %s: %s", email, exc)
-            break
+    try:
+        while True:
+            await asyncio.sleep(WORKER_KEEPALIVE_INTERVAL)
+            entry = _registry.get(email)
+            if entry is None or entry.page is None:
+                break
+            try:
+                await entry.page.evaluate("window.scrollTo(0, 100)")
+                logger.debug("Keep-alive scroll for %s", email)
+            except Exception as exc:
+                logger.warning("Keep-alive failed for %s: %s", email, exc)
+                break
+    finally:
+        logger.info("Keep-alive loop exited for %s. Ensuring worker cleanup.", email)
+        asyncio.create_task(stop_colab_worker(email))
