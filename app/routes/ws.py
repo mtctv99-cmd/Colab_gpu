@@ -324,7 +324,6 @@ async def websocket_worker(ws: WebSocket):
             manager.worker_info[email]["status"] = "IDLE"
 
         async with async_session() as db:
-            from app.models import GoogleAccount
             res = await db.execute(select(GoogleAccount).where(GoogleAccount.email == email))
             account = res.scalar_one_or_none()
             if account:
