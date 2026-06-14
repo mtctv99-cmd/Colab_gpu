@@ -190,7 +190,8 @@ async def get_worker_screenshot(account_id: int, db: AsyncSession = Depends(get_
     if not account:
         raise HTTPException(status_code=404, detail="Account not found.")
     
-    page = play_runner._active_pages.get(account.email)
+    entry = play_runner._registry.get(account.email)
+    page = entry.page if entry else None
     if not page:
         raise HTTPException(status_code=400, detail=f"No active browser session for {account.email}")
     
