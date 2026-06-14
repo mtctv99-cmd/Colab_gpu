@@ -10,7 +10,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy import select, desc, func
@@ -148,12 +148,22 @@ async def download_result_audio(task_id: str, db: AsyncSession = Depends(get_db)
 
 # ── Worker: mark task complete (upload result) ────────────────
 @router.post("/{task_id}/complete")
-async def complete_task(task_id: str, audio: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
+async def complete_task(
+    task_id: str,
+    worker_session_id: str = Form(...),
+    audio: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db)
+):
     task = await db.get(Task, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found.")
     if task.status not in ("PROCESSING", "PENDING"):
         raise HTTPException(status_code=400, detail="Task is not in a processable state.")
+
+    # Verify session ID
+    if task.worker_session_id and task.worker_session_id != worker_session_id:
+        logger.warning("Reject upload for task %s: session mismatch (%s != %s)", task_id, worker_session_id, task.worker_session_id)
+        raise HTTPException(status_code=403, detail="Session ID mismatch.")
 
     # Save audio file asynchronously to avoid blocking FastAPI's event loop.
     # Save in voice-named folder under DATA_DIR for organized output
@@ -168,6 +178,17 @@ async def complete_task(task_id: str, audio: UploadFile = File(...), db: AsyncSe
     task.status = "COMPLETED"
     task.result_audio_path = str(dest)
     task.completed_at = datetime.now(timezone.utc)
+
+    # Sync worker runtime status to IDLE in case ws event is delayed
+    if task.worker_id:
+        from app.models import GoogleAccount
+        acc = await db.get(GoogleAccount, task.worker_id)
+        if acc and acc.worker_session_id == worker_session_id:
+            acc.runtime_status = "IDLE"
+            acc.current_task_id = None
+            if acc.email in manager.worker_info:
+                manager.worker_info[acc.email]["status"] = "IDLE"
+
     await db.commit()
 
     # Giải phóng event nếu đây là direct request
@@ -254,12 +275,17 @@ async def retry_task(task_id: str, _admin=Depends(require_admin), db: AsyncSessi
 
 
 # ── Internal helper ───────────────────────────────────────────
-async def _dispatch_task(task: Task, email: str, db: AsyncSession):
+async def _dispatch_task(task: Task, email: str, worker_session_id: str, db: AsyncSession):
     """Send a PENDING task to an idle worker via WebSocket."""
     import app.config as config
     import os
+    from app.lifecycle.sessions import lease_task_to_worker_session
 
-    task.status = "PROCESSING"
+    # 1. Atomic DB state transition to lease task to worker session
+    success = await lease_task_to_worker_session(db, task, email, worker_session_id)
+    if not success:
+        logger.warning("Failed to lease task %s to worker %s (session %s)", task.id, email, worker_session_id)
+        return False
 
     # Build the voice download URL (the worker will fetch from this)
     base = config.SERVER_URL
@@ -269,18 +295,41 @@ async def _dispatch_task(task: Task, email: str, db: AsyncSession):
 
     num_step = int(os.getenv("OMNIVOICE_NUM_STEP", "24"))
     guidance_scale = float(os.getenv("OMNIVOICE_GUIDANCE_SCALE", "3.0"))
-    dispatched = await manager.send_task(email, task.id, task.text, voice_url, task.language, voice_ref_text, num_step, guidance_scale)
+
+    # 2. WebSocket send task to worker
+    dispatched = await manager.send_task(
+        email, task.id, task.text, voice_url, task.language, voice_ref_text, num_step, guidance_scale
+    )
     if dispatched:
-        # Mark worker as BUSY in memory to prevent duplicate dispatches
+        # Mark worker as BUSY in memory
         manager.worker_info[email]["status"] = "BUSY"
-        
-        # Find the account id for this email (reuse existing session)
+        # Commit DB lease changes
+        await db.commit()
+        return True
+    else:
+        # WebSocket failed: Rollback DB lease changes and mark worker LOST
+        logger.warning("WebSocket dispatch failed for %s. Requeuing task.", email)
+        task.status = "PENDING"
+        task.worker_id = None
+        task.worker_session_id = None
+        task.leased_at = None
+        task.lease_expires_at = None
+
         from app.models import GoogleAccount
         result = await db.execute(select(GoogleAccount).where(GoogleAccount.email == email))
         account = result.scalar_one_or_none()
         if account:
-            task.worker_id = account.id
+            from app.lifecycle.constants import RUNTIME_LOST
+            account.runtime_status = RUNTIME_LOST
+            account.worker_session_id = None
+            account.browser_session_id = None
+            account.current_task_id = None
+
         await db.commit()
-    else:
-        task.status = "PENDING"
-        await db.commit()
+
+        # Stop local browser
+        try:
+            await play_runner.stop_colab_worker(email)
+        except Exception:
+            pass
+        return False

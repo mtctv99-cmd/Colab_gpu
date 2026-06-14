@@ -1141,7 +1141,7 @@ async def _check_google_session_for(email: str, ctx: BrowserContext) -> bool:
         return False
 
 
-async def start_colab_worker(email: str, server_url: str) -> None:
+async def start_colab_worker(email: str, server_url: str, worker_session_id: str = None) -> None:
     """Start a Colab worker: open the notebook, select GPU T4, fill configuration, run-all, and keep-alive."""
     profile_dir = str(PROFILES_DIR / email)
     if not Path(profile_dir).exists():
@@ -1242,6 +1242,8 @@ async def start_colab_worker(email: str, server_url: str) -> None:
         await _fill_colab_param(page, "GITHUB_REPO", GITHUB_REPO)
         await _fill_colab_param(page, "SERVER_URL", server_url)
         await _fill_colab_param(page, "EMAIL", email)
+        if worker_session_id:
+            await _fill_colab_param(page, "WORKER_SESSION_ID", worker_session_id)
 
         # 2. Chọn GPU T4, Connect, Run All ngay, chờ cell start tối đa 20s
         run_all_ok = await _select_gpu_and_connect(page, email)
@@ -1322,6 +1324,13 @@ async def start_colab_worker(email: str, server_url: str) -> None:
 async def stop_colab_worker(email: str) -> None:
     """Stop the Colab worker: cancel keep-alive, close browser."""
     await _registry.stop_one(email)
+    try:
+        from app.lifecycle.sessions import release_worker_session_after_stop
+        from app.database import async_session
+        async with async_session() as db:
+            await release_worker_session_after_stop(db, email)
+    except Exception as e:
+        logger.error("Failed to release session in stop_colab_worker: %s", e)
 
 
 async def _keepalive_loop(email: str) -> None:

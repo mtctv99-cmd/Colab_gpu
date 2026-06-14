@@ -56,3 +56,12 @@ WORKER_TIMEOUT = 60  # seconds to wait for page load
 WORKER_MAX_LIFETIME = 3.75 * 3600  # 3 hours 45 minutes in seconds
 WORKER_HANDOVER_DELAY = 120  # seconds to wait for new worker ready
 AUTO_PICKUP_ENABLED = False  # start worker automatically at server boot
+
+# Worker lifecycle settings
+KEEP_WARM_WORKERS = int(os.getenv("KEEP_WARM_WORKERS", "1"))
+MAX_CONCURRENT_WORKERS = int(os.getenv("MAX_CONCURRENT_WORKERS", "4"))
+SCALE_UP_PENDING_THRESHOLD = int(os.getenv("SCALE_UP_PENDING_THRESHOLD", "10"))
+SCALE_UP_SUSTAIN_SECONDS = int(os.getenv("SCALE_UP_SUSTAIN_SECONDS", "10"))
+SCALE_DOWN_IDLE_SECONDS = int(os.getenv("SCALE_DOWN_IDLE_SECONDS", "1800"))
+TASK_LEASE_SECONDS = int(os.getenv("TASK_LEASE_SECONDS", "300"))
+WORKER_HEARTBEAT_TIMEOUT_SECONDS = int(os.getenv("WORKER_HEARTBEAT_TIMEOUT_SECONDS", "60"))

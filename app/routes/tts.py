@@ -96,11 +96,8 @@ async def tts_text(req: TextTTSRequest, user: User = Depends(require_user), db: 
 
         # 2. Check for active workers
         if not manager.get_idle_worker():
-            from app.routes.ws import _try_auto_rotate, _maybe_scale_up, _rotate_lock, _has_starting_or_active_account
-            if not manager.active and not _rotate_lock.locked() and not await _has_starting_or_active_account():
-                asyncio.create_task(_try_auto_rotate())
-            elif manager.active:
-                asyncio.create_task(_maybe_scale_up())
+            from app.routes.ws import _maybe_scale_up
+            asyncio.create_task(_maybe_scale_up())
             for _ in range(30):
                 await asyncio.sleep(1)
                 if manager.get_idle_worker():
@@ -114,7 +111,9 @@ async def tts_text(req: TextTTSRequest, user: User = Depends(require_user), db: 
         event = asyncio.Event()
         _pending_direct_events[task.id] = event
         from app.routes.tasks import _dispatch_task
-        await _dispatch_task(task, idle_email, db)
+        info = manager.worker_info.get(idle_email, {})
+        wsid = info.get("worker_session_id")
+        await _dispatch_task(task, idle_email, wsid, db)
         await manager.broadcast_status({"event": "task_created", "task_id": task.id})
 
         # 4. Wait for result
@@ -192,19 +191,18 @@ async def tts_batch(req: BatchTTSRequest, user: User = Depends(require_user), db
     for task in created_tasks:
         await db.refresh(task)
 
-    # 3. Trigger auto-rotate / scale for batch (only if not already rotating)
-    from app.routes.ws import _try_auto_rotate, _on_batch_request, _rotate_lock, _has_starting_or_active_account
-    if not manager.active and not _rotate_lock.locked() and not await _has_starting_or_active_account():
-        asyncio.create_task(_try_auto_rotate())
-    elif manager.active:
-        asyncio.create_task(_on_batch_request())
+    # 3. Trigger auto-rotate / scale for batch
+    from app.routes.ws import _maybe_scale_up
+    asyncio.create_task(_maybe_scale_up())
 
     # 4. Attempt immediate dispatch
     from app.routes.tasks import _dispatch_task
     for task in created_tasks:
         idle_email = manager.get_idle_worker()
         if idle_email:
-            await _dispatch_task(task, idle_email, db)
+            info = manager.worker_info.get(idle_email, {})
+            wsid = info.get("worker_session_id")
+            await _dispatch_task(task, idle_email, wsid, db)
         await manager.broadcast_status({"event": "task_created", "task_id": task.id})
 
     return {

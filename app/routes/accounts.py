@@ -37,8 +37,13 @@ async def list_accounts(db: AsyncSession = Depends(get_db)):
             "email": a.email,
             "profile_name": a.profile_name,
             "status": a.status,
+            "runtime_status": a.runtime_status,
+            "worker_session_id": a.worker_session_id,
+            "browser_session_id": a.browser_session_id,
+            "current_task_id": a.current_task_id,
             "last_active": a.last_active.isoformat() if a.last_active else None,
             "started_at": a.started_at.isoformat() if a.started_at else None,
+            "last_heartbeat_at": a.last_heartbeat_at.isoformat() if a.last_heartbeat_at else None,
             "quota_reset_at": a.quota_reset_at.isoformat() if a.quota_reset_at else None,
         }
         for a in accounts
@@ -94,36 +99,41 @@ async def start_worker(account_id: int, request: Request, db: AsyncSession = Dep
     account = await db.get(GoogleAccount, account_id)
     if not account:
         raise HTTPException(status_code=404, detail="Account not found.")
-    if account.status not in ("OFFLINE",):
-        raise HTTPException(status_code=400, detail=f"Account is {account.status}, cannot start.")
 
-    account.status = "ACTIVE"
-    account.last_active = datetime.now(timezone.utc)
-    account.started_at = datetime.now(timezone.utc)
-    await db.commit()
+    from app.lifecycle.sessions import reserve_account_for_browser_launch
+    res = await reserve_account_for_browser_launch(db, email=account.email)
+    if not res:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Account {account.email} is not READY or already has active session."
+        )
+    email, browser_sid = res
 
-    # Determine server URL: config.SERVER_URL is preferred if it has been updated from default localhost,
-    # otherwise fallback to the current request's base URL.
+    # Determine server URL
     server_url = config.SERVER_URL
     if "localhost" in server_url or "127.0.0.1" in server_url:
         server_url = str(request.base_url).rstrip("/")
 
     async def _bg_start():
         try:
-            await play_runner.start_colab_worker(account.email, server_url)
+            await play_runner.start_colab_worker(email, server_url, browser_sid)
         except Exception as exc:
-            logger.error("Background start failed for %s: %s", account.email, exc)
-            # Re-fetch database session to update status
+            logger.error("Background start failed for %s: %s", email, exc)
+            # Cleanup DB state on launch error
             from app.database import async_session
             async with async_session() as bdb:
                 acc = await bdb.get(GoogleAccount, account_id)
                 if acc:
-                    acc.status = "OFFLINE"
+                    acc.worker_session_id = None
+                    acc.browser_session_id = None
+                    acc.runtime_status = None
+                    # Set COOLDOWN backoff
+                    acc.status = "COOLDOWN"
+                    acc.quota_reset_at = datetime.now(timezone.utc) + timedelta(minutes=5)
                     await bdb.commit()
 
     asyncio.create_task(_bg_start())
-    return {"id": account.id, "status": "STARTING_BACKGROUND"}
-
+    return {"id": account.id, "status": "STARTING_BACKGROUND", "browser_session_id": browser_sid}
 
 
 # ── Stop worker ───────────────────────────────────────────────
@@ -134,9 +144,7 @@ async def stop_worker(account_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Account not found.")
 
     await play_runner.stop_colab_worker(account.email)
-    account.status = "OFFLINE"
-    await db.commit()
-    return {"id": account.id, "status": account.status}
+    return {"id": account.id, "status": "STOPPING_BACKGROUND"}
 
 
 # ── Delete account ────────────────────────────────────────────
@@ -193,3 +201,40 @@ async def get_worker_screenshot(account_id: int, db: AsyncSession = Depends(get_
     except Exception as exc:
         logger.error("Failed to capture screenshot for %s: %s", account.email, exc, exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+# ── Capacity info ─────────────────────────────────────────────
+@router.get("/capacity")
+@router.get("/capacity/")
+async def get_system_capacity_info(db: AsyncSession = Depends(get_db)):
+    from app.lifecycle.capacity import (
+        get_active_capacity,
+        get_warm_capacity,
+        get_idle_capacity,
+        get_busy_capacity,
+        get_pending_tasks_count,
+        get_processing_tasks_count,
+        get_ready_accounts_count,
+    )
+    from app.config import MAX_CONCURRENT_WORKERS, KEEP_WARM_WORKERS
+
+    active_cap = await get_active_capacity(db)
+    warm_cap = await get_warm_capacity(db)
+    idle_cap = await get_idle_capacity(db)
+    busy_cap = await get_busy_capacity(db)
+    pending_tasks = await get_pending_tasks_count(db)
+    processing_tasks = await get_processing_tasks_count(db)
+    ready_accounts = await get_ready_accounts_count(db)
+
+    return {
+        "max_concurrent_workers": MAX_CONCURRENT_WORKERS,
+        "keep_warm_workers": KEEP_WARM_WORKERS,
+        "active_capacity": active_cap,
+        "warm_capacity": warm_cap,
+        "idle_capacity": idle_cap,
+        "busy_capacity": busy_cap,
+        "pending_tasks": pending_tasks,
+        "processing_tasks": processing_tasks,
+        "ready_accounts": ready_accounts,
+    }
+

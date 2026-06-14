@@ -73,35 +73,14 @@ def _start_cloudflare_tunnel_sync():
 async def lifespan(app: FastAPI):
     """Startup / shutdown lifecycle."""
     # Startup
-    logger.info("Cleaning up zombie browser processes...")
-    try:
-        from app.automation.play_runner import cleanup_zombie_browsers
-        killed = await cleanup_zombie_browsers(kill_active=True)
-        if killed > 0:
-            logger.info("Cleaned up %d leftover browser processes.", killed)
-    except Exception as exc:
-        logger.warning("Failed to run startup browser cleanup: %s", exc)
+    from app.lifecycle.reconciler import startup_cleanup_processes, reconcile_database_on_startup
+    await startup_cleanup_processes()
 
     logger.info("Initializing database...")
     await init_db()
     logger.info("Database ready.")
 
-    # Reset any tasks stuck in PROCESSING state to PENDING
-    logger.info("Cleaning up orphan tasks...")
-    try:
-        from sqlalchemy import update
-        from app.database import async_session
-        from app.models import Task
-        async with async_session() as db:
-            await db.execute(
-                update(Task)
-                .where(Task.status == "PROCESSING")
-                .values(status="PENDING", worker_id=None)
-            )
-            await db.commit()
-        logger.info("Orphan tasks cleaned up successfully.")
-    except Exception as e:
-        logger.error("Failed to clean up orphan tasks: %s", e)
+    await reconcile_database_on_startup()
 
     if CLOUDFLARED_ENABLED:
         import threading
@@ -128,6 +107,12 @@ async def lifespan(app: FastAPI):
             p.wait(timeout=5)
         except Exception:
             pass
+
+    # Dispose database engine to close pool connections
+    from app.database import engine
+    await engine.dispose()
+    logger.info("Database engine connections closed.")
+
     logger.info("Server shutting down.")
 
 

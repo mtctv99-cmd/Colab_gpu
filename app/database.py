@@ -2,11 +2,19 @@
 
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import event
 
 from app.config import DATABASE_URL
 
 engine = create_async_engine(DATABASE_URL, echo=False, connect_args={"timeout": 30})
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+
+@event.listens_for(engine.sync_engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
 
 
 class Base(DeclarativeBase):
@@ -26,15 +34,6 @@ async def init_db():
         await conn.execute(sa.text("PRAGMA journal_mode=WAL"))
         await conn.execute(sa.text("PRAGMA busy_timeout=30000"))
 
-    # Recreate tables with stale schema (api_keys was created by old model)
-    for table in ["api_keys"]:
-        try:
-            async with async_session() as session:
-                await session.execute(sa.text(f"DROP TABLE IF EXISTS {table}"))
-                await session.commit()
-        except Exception:
-            pass
-
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -45,6 +44,16 @@ async def init_db():
         "ALTER TABLE tasks ADD COLUMN user_id INTEGER REFERENCES users(id)",
         "ALTER TABLE users ADD COLUMN last_login_at DATETIME",
         "CREATE INDEX IF NOT EXISTS ix_usage_records_user_id ON usage_records(user_id)",
+        "ALTER TABLE google_accounts ADD COLUMN worker_session_id VARCHAR",
+        "ALTER TABLE google_accounts ADD COLUMN browser_session_id VARCHAR",
+        "ALTER TABLE google_accounts ADD COLUMN runtime_status VARCHAR",
+        "ALTER TABLE google_accounts ADD COLUMN current_task_id VARCHAR",
+        "ALTER TABLE google_accounts ADD COLUMN last_heartbeat_at DATETIME",
+        "ALTER TABLE google_accounts ADD COLUMN lease_expires_at DATETIME",
+        "ALTER TABLE tasks ADD COLUMN worker_session_id VARCHAR",
+        "ALTER TABLE tasks ADD COLUMN attempt INTEGER DEFAULT 0",
+        "ALTER TABLE tasks ADD COLUMN leased_at DATETIME",
+        "ALTER TABLE tasks ADD COLUMN lease_expires_at DATETIME",
     ]
     for sql in _MIGRATIONS:
         try:
@@ -54,6 +63,30 @@ async def init_db():
         except Exception:
             # Silently ignore if column already exists
             pass
+
+    # Backfill old status/runtime fields
+    try:
+        async with async_session() as session:
+            await session.execute(sa.text(
+                "UPDATE google_accounts SET status = 'READY', runtime_status = 'IDLE', "
+                "last_heartbeat_at = COALESCE(last_active, started_at) WHERE status = 'ACTIVE'"
+            ))
+            await session.execute(sa.text(
+                "UPDATE google_accounts SET status = 'READY', runtime_status = 'BUSY', "
+                "last_heartbeat_at = COALESCE(last_active, started_at) WHERE status = 'BUSY'"
+            ))
+            await session.execute(sa.text(
+                "UPDATE google_accounts SET status = 'READY', runtime_status = 'CONNECTING_RUNTIME' WHERE status = 'CONNECTING'"
+            ))
+            await session.execute(sa.text(
+                "UPDATE google_accounts SET status = 'READY', runtime_status = 'WARMING_MODEL' WHERE status = 'LOADING'"
+            ))
+            await session.execute(sa.text(
+                "UPDATE google_accounts SET status = 'READY' WHERE status = 'OFFLINE'"
+            ))
+            await session.commit()
+    except Exception:
+        pass
 
     # Fix Windows-style paths in voices table for Linux hosts
     from pathlib import Path

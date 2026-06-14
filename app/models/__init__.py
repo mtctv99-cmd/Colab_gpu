@@ -14,11 +14,18 @@ class GoogleAccount(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     email = Column(String, unique=True, nullable=False)
     profile_name = Column(String, nullable=False)
-    status = Column(String, nullable=False, default="OFFLINE")
+    status = Column(String, nullable=False, default="READY")
     last_active = Column(DateTime, nullable=True)
     quota_reset_at = Column(DateTime, nullable=True)
     colab_pid = Column(Integer, nullable=True)
     started_at = Column(DateTime, nullable=True)
+
+    worker_session_id = Column(String, nullable=True)
+    browser_session_id = Column(String, nullable=True)
+    runtime_status = Column(String, nullable=True)
+    current_task_id = Column(String, nullable=True)
+    last_heartbeat_at = Column(DateTime, nullable=True)
+    lease_expires_at = Column(DateTime, nullable=True)
 
     tasks = relationship("Task", back_populates="worker")
 
@@ -50,6 +57,11 @@ class Task(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     completed_at = Column(DateTime, nullable=True)
+
+    worker_session_id = Column(String, nullable=True)
+    attempt = Column(Integer, nullable=False, default=0)
+    leased_at = Column(DateTime, nullable=True)
+    lease_expires_at = Column(DateTime, nullable=True)
 
     voice = relationship("Voice", back_populates="tasks")
     worker = relationship("GoogleAccount", back_populates="tasks")

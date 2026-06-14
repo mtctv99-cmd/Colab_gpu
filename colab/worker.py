@@ -407,14 +407,14 @@ async def send_json_safe(ws: Any, payload: dict[str, Any]) -> None:
         pass
 
 
-async def send_status(ws: Any, status: str, queue_size: int | None = None) -> None:
-    payload: dict[str, Any] = {"action": "status", "status": status}
+async def send_status(ws: Any, status: str, queue_size: int | None = None, worker_session_id: str = "") -> None:
+    payload: dict[str, Any] = {"action": "status", "status": status, "worker_session_id": worker_session_id}
     if queue_size is not None:
         payload["queue_size"] = queue_size
     await send_json_safe(ws, payload)
 
 
-async def process_task(model: Any, ws: Any, http_client: httpx.AsyncClient, server_url: str, data: dict[str, Any]) -> None:
+async def process_task(model: Any, ws: Any, http_client: httpx.AsyncClient, server_url: str, data: dict[str, Any], worker_session_id: str = "") -> None:
     task_id = data["task_id"]
     text = data["text"]
     voice_url = data["voice_api_url"]
@@ -442,13 +442,14 @@ async def process_task(model: Any, ws: Any, http_client: httpx.AsyncClient, serv
         upload_url = f"{server_url}/api/tasks/{task_id}/complete"
         upload_response = await http_client.post(
             upload_url,
+            data={"worker_session_id": worker_session_id},
             files={"audio": ("result.wav", result_audio, "audio/wav")},
             timeout=120,
         )
         upload_response.raise_for_status()
         upload_ms = (time.time() - upload_started) * 1000
 
-        await send_json_safe(ws, {"action": "task_completed", "task_id": task_id})
+        await send_json_safe(ws, {"action": "task_completed", "task_id": task_id, "worker_session_id": worker_session_id})
         audio_seconds = len(result_audio) / (SAMPLE_RATE * 2)
         peak_mb = 0.0
         if torch.cuda.is_available():
@@ -460,7 +461,7 @@ async def process_task(model: Any, ws: Any, http_client: httpx.AsyncClient, serv
         )
     except Exception as exc:
         print(f"[fail] {task_id}: {exc}", flush=True)
-        await send_json_safe(ws, {"action": "task_failed", "task_id": task_id, "error": str(exc)})
+        await send_json_safe(ws, {"action": "task_failed", "task_id": task_id, "error": str(exc), "worker_session_id": worker_session_id})
 
 
 async def task_consumer(
@@ -469,18 +470,19 @@ async def task_consumer(
     ws: Any,
     http_client: httpx.AsyncClient,
     server_url: str,
+    worker_session_id: str = "",
 ) -> None:
     while True:
         data = await queue.get()
         try:
-            await send_status(ws, "BUSY", queue.qsize())
-            await process_task(model, ws, http_client, server_url, data)
+            await send_status(ws, "BUSY", queue.qsize(), worker_session_id)
+            await process_task(model, ws, http_client, server_url, data, worker_session_id)
         finally:
             queue.task_done()
-            await send_status(ws, "IDLE" if queue.empty() else "BUSY", queue.qsize())
+            await send_status(ws, "IDLE" if queue.empty() else "BUSY", queue.qsize(), worker_session_id)
 
 
-async def worker_loop(model: Any, server_url: str, email: str) -> None:
+async def worker_loop(model: Any, server_url: str, email: str, worker_session_id: str = "") -> None:
     ws_url = websocket_url(server_url)
     limits = httpx.Limits(max_connections=8, max_keepalive_connections=4)
 
@@ -499,10 +501,17 @@ async def worker_loop(model: Any, server_url: str, email: str) -> None:
                     max_queue=32,
                 ) as ws:
                     gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu"
-                    await ws.send(json.dumps({"action": "register", "email": email, "gpu": gpu}))
-                    consumer_task = asyncio.create_task(task_consumer(task_queue, model, ws, http_client, server_url))
+                    await ws.send(json.dumps({
+                        "action": "register",
+                        "email": email,
+                        "worker_session_id": worker_session_id,
+                        "gpu": gpu
+                    }))
+                    consumer_task = asyncio.create_task(
+                        task_consumer(task_queue, model, ws, http_client, server_url, worker_session_id)
+                    )
                     print(f"🚀 Connected: {email} (GPU: {gpu})", flush=True)
-                    await send_status(ws, "IDLE", 0)
+                    await send_status(ws, "IDLE", 0, worker_session_id)
 
                     while True:
                         raw = await ws.recv()
@@ -512,19 +521,21 @@ async def worker_loop(model: Any, server_url: str, email: str) -> None:
                         if action == "run_tts":
                             try:
                                 task_queue.put_nowait(data)
-                                await send_status(ws, "BUSY", task_queue.qsize())
+                                await send_status(ws, "BUSY", task_queue.qsize(), worker_session_id)
                             except asyncio.QueueFull:
                                 await send_json_safe(ws, {
                                     "action": "task_failed",
                                     "task_id": data.get("task_id"),
                                     "error": "Worker queue full",
+                                    "worker_session_id": worker_session_id,
                                 })
                         elif action == "ping":
                             # Send standard pong + current worker status
                             current_status = "IDLE" if task_queue.empty() else "BUSY"
                             await ws.send(json.dumps({
                                 "action": "pong_status",
-                                "status": current_status
+                                "status": current_status,
+                                "worker_session_id": worker_session_id,
                             }))
                         elif action == "shutdown":
                             print("[ws] Server yêu cầu shutdown.", flush=True)
@@ -546,6 +557,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Colab OmniVoice TTS Worker")
     parser.add_argument("--server-url", required=True)
     parser.add_argument("--email", required=True)
+    parser.add_argument("--worker-session-id", default="")
     return parser.parse_args()
 
 
@@ -562,9 +574,11 @@ def main() -> None:
         print("[error] EMAIL không được để trống.", flush=True)
         sys.exit(1)
 
+    worker_session_id = args.worker_session_id.strip()
+
     print(f"[fast-mode] num_step={OMNIVOICE_NUM_STEP} guidance_scale={OMNIVOICE_GUIDANCE_SCALE} ref_max={REF_AUDIO_MAX_SECONDS}s speed={OMNIVOICE_SPEED}", flush=True)
     model = load_model(detect_device())
-    asyncio.run(worker_loop(model, server_url, email))
+    asyncio.run(worker_loop(model, server_url, email, worker_session_id))
 
 
 if __name__ == "__main__":
