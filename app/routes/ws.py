@@ -367,6 +367,7 @@ async def _try_auto_rotate():
                 select(GoogleAccount)
                 .where(
                     GoogleAccount.status.in_(["OFFLINE", "READY"]),
+                    GoogleAccount.email.not_like("local@%"),
                     (GoogleAccount.quota_reset_at.is_(None)) | (GoogleAccount.quota_reset_at <= now),
                 )
                 .order_by(GoogleAccount.last_active.asc().nullsfirst())

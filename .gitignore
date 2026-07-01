@@ -18,6 +18,7 @@ data/db_test.sqlite3-wal
 data/profiles/
 data/*.png
 data/*.log
+data/*.html
 data/action_cache.json
 data/results/
 data/voices/*/output/
@@ -44,9 +45,13 @@ Thumbs.db
 temp_diff.txt
 fix_auth.patch
 
+# Generated test outputs
+audio_output/
+
 # Generated audio outputs
 data/voices/*/output/*.wav
 data/*/output/*.wav
+data/ngoc_huyen/
 
 # Binaries
 cloudflared.deb

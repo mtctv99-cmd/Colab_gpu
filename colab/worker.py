@@ -188,9 +188,12 @@ def load_model(device: str) -> Any:
         dummy_ref = "/tmp/warmup.wav"
         if not os.path.exists(dummy_ref):
             import numpy as np
-            sf.write(dummy_ref, np.zeros(SAMPLE_RATE, dtype="float32"), SAMPLE_RATE, format="WAV")
+            import soundfile as sf
+            noise = (np.random.rand(SAMPLE_RATE * 2).astype(np.float32) - 0.5) * 0.1
+            sf.write(dummy_ref, noise, SAMPLE_RATE, format="WAV")
 
         kwargs = build_generate_kwargs(model._omnivoice_generate_params, "Warmup", dummy_ref)
+        kwargs["preprocess_prompt"] = False
         with torch.inference_mode(), autocast_context():
             model.generate(**kwargs)
         if torch.cuda.is_available():
@@ -457,7 +460,7 @@ async def worker_loop(model: Any, server_url: str, email: str, worker_session_id
     ws_url = websocket_url(server_url)
     limits = httpx.Limits(max_connections=8, max_keepalive_connections=4)
 
-    async with httpx.AsyncClient(limits=limits, http2=True, timeout=60) as http_client:
+    async with httpx.AsyncClient(limits=limits, timeout=60) as http_client:
         while True:
             consumer_task: asyncio.Task | None = None
             task_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=TASK_QUEUE_MAXSIZE)

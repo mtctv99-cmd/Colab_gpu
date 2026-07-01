@@ -1238,6 +1238,31 @@ async def start_colab_worker(email: str, server_url: str, worker_session_id: str
         await page.wait_for_timeout(2000)
         await page.evaluate(_JS_UTILS)
 
+        # Inject MutationObserver to auto-dismiss Run anyway dialog immediately
+        try:
+            await page.evaluate("""() => {
+                if (window.__runAnywayObserver) return;
+                const _dismissRunAnyway = () => {
+                    const dialog = document.querySelector('mwc-dialog[open], mwc-dialog[aria-hidden="false"], mwc-dialog');
+                    if (!dialog || !dialog.hasAttribute('open')) return false;
+                    const text = (dialog.innerText || dialog.textContent || '').toLowerCase();
+                    if (!text.includes('run anyway') && !text.includes('warning') && !text.includes('github')) return false;
+                    const btns = dialog.querySelectorAll('md-text-button, md-filled-button, [dialogAction="ok"], [dialogaction="ok"]');
+                    for (const btn of btns) {
+                        const inner = btn.shadowRoot?.querySelector('button');
+                        if (inner) { inner.click(); return true; }
+                        btn.click();
+                        return true;
+                    }
+                    return false;
+                };
+                _dismissRunAnyway();
+                window.__runAnywayObserver = new MutationObserver(() => _dismissRunAnyway());
+                window.__runAnywayObserver.observe(document.body, { childList: true, subtree: true, attributes: true });
+            }""")
+        except Exception:
+            pass
+
         # Check if Google login is expired / required in Colab
         try:
             url = page.url
@@ -1316,8 +1341,27 @@ async def start_colab_worker(email: str, server_url: str, worker_session_id: str
                             console.log('[Antigravity-KeepAlive] Clicked Connect button');
                         }
                     }
-                    const runAnyway = Array.from(document.querySelectorAll('button, paper-button, md-text-button, md-filled-button, [role="button"]'))
-                        .find(el => ((el.innerText || el.textContent || '').toLowerCase()).includes('run anyway'));
+                    let runAnyway = null;
+                    const allButtons = document.querySelectorAll('button, paper-button, md-text-button, md-filled-button, [role="button"], [dialogAction="ok"], [dialogaction="ok"]');
+                    for (const el of allButtons) {
+                        const shadow = el.shadowRoot;
+                        const innerBtn = shadow?.querySelector('button');
+                        const txt = ((innerBtn?.innerText || innerBtn?.textContent || el.innerText || el.textContent || '').toLowerCase());
+                        if (txt.includes('run anyway') || el.getAttribute?.('dialogAction') === 'ok' || el.getAttribute?.('dialogaction') === 'ok') {
+                            runAnyway = innerBtn || el;
+                            break;
+                        }
+                    }
+                    if (!runAnyway) {
+                        const dialog = document.querySelector('mwc-dialog[open], mwc-dialog[aria-hidden="false"], mwc-dialog');
+                        if (dialog && dialog.hasAttribute('open')) {
+                            const textBtns = dialog.querySelectorAll('md-text-button');
+                            const secondBtn = textBtns[1];
+                            if (secondBtn) {
+                                runAnyway = secondBtn.shadowRoot?.querySelector('button') || secondBtn;
+                            }
+                        }
+                    }
                     if (runAnyway) {
                         runAnyway.click();
                         console.log('[Antigravity-KeepAlive] Dismissed Run anyway dialog');
