@@ -1,0 +1,16 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.frontend
+      args:
+        API_HOST: host.docker.internal
+    container_name: tts-dubbing-frontend
+    ports:
+      - "3355:3355"
+    environment:
+      - API_HOST=host.docker.internal
+      - PORT=3355
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

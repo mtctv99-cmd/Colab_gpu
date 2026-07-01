@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+
+# Environment
+.env
+
+# Data
+data/db.sqlite3
+data/db.sqlite3-shm
+data/db.sqlite3-wal
+data/db_test.sqlite3
+data/db_test.sqlite3-shm
+data/db_test.sqlite3-wal
+data/profiles/
+data/*.png
+data/*.log
+data/action_cache.json
+data/results/
+data/voices/*/output/
+
+# Logs
+*.log
+backend.log
+backend_tmp.log
+backend_new.log
+nohup.out
+
+# Tests
+.pytest_cache/
+.tmp/
+
+# Docker
+cloudflared.deb
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+temp_diff.txt
+fix_auth.patch
+
+# Generated audio outputs
+data/voices/*/output/*.wav
+data/*/output/*.wav
+
+# Binaries
+cloudflared.deb
+data/snapshot.tar.gz
+data/backups/
+data/db.sqlite3
+data/db_test.sqlite3
+data/db.sqlite3-journal
+data/profiles_backup_*.tar.gz
+backup_profiles_cookies.zip
+FULL_BACKUP_COLAB.zip
+
+# Large binaries (GitHub < 100MB limit)
+bin/cloakbrowser/chrome
+bin/cloakbrowser/cloakbrowser-linux-x64.tar.gz
